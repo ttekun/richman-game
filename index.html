@@ -1012,13 +1012,16 @@ async function ensureMLCEngine(onProgress) {
   if (mlcLoading) return null; // already loading
   mlcLoading = true;
   try {
+    console.log('[WebLLM] Starting model load:', WEBLLM_MODEL);
     const engine = await CreateMLCEngine(WEBLLM_MODEL, {
       initProgressCallback: function(report) {
+        console.log('[WebLLM] Progress:', report.progress || 0, report.text || '');
         if (onProgress) onProgress(report);
       }
     });
     mlcEngine = engine;
     mlcLoading = false;
+    console.log('[WebLLM] Model loaded successfully');
     return engine;
   } catch(e) {
     mlcLoading = false;
