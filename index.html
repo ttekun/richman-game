@@ -133,6 +133,8 @@ body{
 .glossary-item .term-example{font-size:.8rem;color:var(--text-faint);margin-top:6px;font-style:italic}
 .float-btn{position:fixed;bottom:16px;right:16px;z-index:40;width:48px;height:48px;border-radius:50%;background:var(--bg-elevated);border:1px solid var(--border);color:var(--text);font-size:1.2rem;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .float-btn:active{transform:scale(.9)}
+.lang-btn{position:fixed;top:16px;right:16px;z-index:60;width:44px;height:44px;border-radius:50%;background:var(--bg-elevated);border:1px solid var(--border);color:var(--text);font-size:1.1rem;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.lang-btn:active{transform:scale(.9)}
 .replay-prompt{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px;margin:12px 0}
 .replay-prompt ul{list-style:none;padding:0;margin:8px 0}
 .replay-prompt li{padding:4px 0;font-size:.85rem;color:var(--text-dim)}
@@ -145,535 +147,908 @@ body{
 .highlight-card .hl-title{font-size:.8rem;color:var(--text-faint)}
 .highlight-card .hl-value{font-size:1.1rem;font-weight:600;color:var(--text);margin-top:2px}
 .scroll-hint{text-align:center;color:var(--text-faint);font-size:.8rem;padding:8px}
+.loading-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px;text-align:center}
+.loading-spinner{font-size:2rem;margin-bottom:16px;animation:dice-shake .5s infinite;display:inline-block}
 </style>
 </head>
 <body>
-<div id="app"></div>
-<script>
-'use strict';
+<div id="app">
+  <div class="loading-screen">
+    <span class="loading-spinner">🎲</span>
+    <div style="color:var(--text-dim);font-size:.9rem">Loading WASM...</div>
+  </div>
+</div>
+<script type="module">
+import init, { GameEngine } from './wasm/pkg/rich_man_engine.js';
 
-// === 1. CONSTANTS & GLOSSARY ===
-const GAME = { goal: 200000, maxYears: 10, minCapital: 100, saveVersion: 1 };
+let engine = null;
+let currentDecisions = [];
+let glossaryData = [];
+var app = document.getElementById('app');
+var setupStep = 0;
+var setupCapital = 0;
+var setupDuration = 10;
+var setupStrategy = '';
 
-const GLOSSARY = {
-  'MRR': { term: 'MRR (Monthly Recurring Revenue)', short: '월간 반복 수익', desc: '매월 고정으로 들어오는 수익. 구독형 서비스(SaaS)에서 고객이 매월 내는 돈의 합계.', example: '유료 50명 × 월 2만엔 = MRR 100만엔' },
-  'ARR': { term: 'ARR (Annual Recurring Revenue)', short: '연간 반복 수익', desc: 'MRR × 12. 투자자가 사업 가치를 평가할 때 가장 중요하게 보는 지표.', example: 'MRR 100만 × 12 = ARR 1,200만엔' },
-  'LTV': { term: 'LTV (Loan to Value)', short: '담보대출 비율', desc: '부동산 감정가격 대비 대출 금액의 비율. 80%면 자기돈 20%로 매물을 살 수 있다는 뜻.', example: '1,800만엔 매물에 1,440만엔 대출 = LTV 80%' },
-  'CF': { term: 'CF (Cash Flow)', short: '현금 흐름', desc: '들어오는 돈(월세)에서 나가는 돈(관리비, 이자, 수리비)을 뺀 순수 현금.', example: '월세 9.5만 - 관리비 2만 - 이자 1만 = CF +6.5만엔' },
-  'Series A': { term: 'Series A (시리즈A)', short: '1차 본격 투자', desc: '사업이 성장한 후 받는 첫 번째 큰 투자. 보통 1~3억엔을 받고 지분 15~30%를 양보.', example: '1.5억엔 투자, 지분 25% 양보 → 회사 가치 6억엔' },
-  'Exit': { term: 'Exit (엑시트)', short: '사업 매각/상장', desc: '창업자가 회사 지분을 팔아 현금을 회수하는 것. M&A 매각 또는 IPO 상장.', example: '회사를 10억엔에 매각 → 내 지분 75% = 7.5억엔' },
-  'Refinance': { term: 'Refinance (리파이낸스)', short: '대출 갈아타기', desc: '기존 대출을 새 조건의 대출로 바꾸는 것. 부동산 가치가 오르면 감정가를 높여 더 많이 빌릴 수 있음.', example: '대출 1,600만 → 감정가 상향 → 새 대출 1,785만 → 185만엔 회수' },
-  'Equity': { term: 'Equity (에퀴티)', short: '순자산', desc: '부동산의 "내 돈" 부분. 시장가격에서 대출 잔액을 뺀 금액.', example: '2,000만엔 매물 - 1,600만엔 대출 = equity 400만엔' },
-  'PropTech': { term: 'PropTech (프롭테크)', short: '부동산 + 기술', desc: 'Property + Technology. 부동산 업무를 IT로 효율화하는 사업.', example: '리노베이션 관리 앱 → 본인 매물 가치 +10% → 유저 확보' },
-  'CAC': { term: 'CAC (Customer Acquisition Cost)', short: '고객 1명 확보 비용', desc: '신규 유료 고객 1명을 데려오는데 드는 마케팅 비용.', example: '월 5만엔 광고 → 2명 가입 = CAC 2.5만엔' },
-  'Bootstrap': { term: 'Bootstrap (부트스트랩)', short: '자력 성장', desc: '외부 투자 없이 자기 자본과 매출로만 사업을 키우는 방식.', example: 'VC 안 받고 MRR을 키우며 자력으로 성장' },
-  'VC': { term: 'VC (Venture Capital)', short: '벤처 투자사', desc: '성장 가능성이 높은 스타트업에 투자하는 전문 투자 회사.', example: 'VC 1.5억엔 투자 → 지분 25% + 이사석 1석' },
-  'IPO': { term: 'IPO (기업공개)', short: '주식 상장', desc: '회사를 주식시장에 상장해서 누구나 주식을 살 수 있게 하는 것.', example: '상장 시 내 지분 가치 = 시가총액 × 지분율' },
-  'M&A': { term: 'M&A (인수합병)', short: '회사 매수/매각', desc: '다른 회사가 내 회사를 사가는 것(매각) 또는 내가 다른 회사를 사는 것(매수).', example: 'Z Holdings가 내 회사를 10억엔에 인수' },
-  'Multiplier': { term: 'Multiplier (배수)', short: '사업 가치 배수', desc: 'ARR의 몇 배를 사업 가치로 볼지 나타내는 숫자. 성장 중인 SaaS는 5~10배.', example: 'ARR 5,400만 × 배수 6 = 사업 가치 3.24억엔' },
-  'PoC': { term: 'PoC (Proof of Concept)', short: '사례 증명', desc: '아이디어가 실제로 효과가 있다는 것을 보여주는 증거.', example: '본인 매물 가치 +10% → "이 서비스 효과 있습니다"' },
-  'Pivot': { term: 'Pivot (피벗)', short: '방향 전환', desc: '사업의 핵심 방향을 바꾸는 것. 원래 제품이 안 풀릴 때 다른 시장이나 기능으로 전환.', example: 'AI 에이전트 → 부동산 관리 서비스로 피벗' },
+// === I18N ===
+var LANGS = ['ko', 'ja', 'en'];
+var currentLang = localStorage.getItem('richman-lang') || 'ko';
+
+const I18N = {
+  ko: {
+    "ui.title": "20億円の夢",
+    "ui.subtitle": "Rich Man Simulator",
+    "ui.start": "게임 시작",
+    "ui.resume": "이어하기",
+    "ui.glossary": "📖 용어 사전",
+    "ui.next": "다음 →",
+    "ui.decision_prompt": "어떻게 하시겠습니까?",
+    "ui.year_result": "📊 이번 년 결과",
+    "ui.balance_sheet": "📋 대차대조표",
+    "ui.chart": "📈 연도별 추이",
+    "ui.final_result": "🏆 최종 결과",
+    "ui.after_tax": "(세후 최종 자산)",
+    "ui.start_capital": "시작 자본",
+    "ui.growth_mult": "성장 배수",
+    "ui.duration": "기간",
+    "ui.asset_breakdown": "📊 자산별 내역 (세후)",
+    "ui.total": "합계",
+    "ui.cash": "현금",
+    "ui.realestate": "부동산",
+    "ui.stocks": "주식/암호",
+    "ui.business": "사업",
+    "ui.propTech": "PropTech",
+    "ui.try_again": "💡 다른 전략으로 도전해보세요!",
+    "ui.replay": "다시 플레이",
+    "ui.copy": "📋 복사",
+    "ui.share": "📤 공유",
+    "ui.copied": "✅ 복사됨!",
+    "ui.setup_capital": "시작 자본을 입력하세요",
+    "ui.setup_duration": "목표 기간을 선택하세요",
+    "ui.setup_strategy": "선호하는 전략을 선택하세요",
+    "ui.goal": "🎯 목표: 20億円 (고정)",
+    "ui.market": "🌐 시장",
+    "ui.no_change": "변동 없음",
+    "ui.loading": "WASM 엔진 로딩 중...",
+    "ui.lang_button": "🌐",
+    "ui.close": "닫기",
+    "ui.search": "검색...",
+    "ui.year": "Year",
+    "ui.result_suffix": " 결과",
+    "ui.next_year": "다음 해 →",
+    "ui.view_result": "결과 보기 →",
+    "ui.goal_progress": "% → 목표 20億円",
+    "ui.capital_unit": "만엔 단위 (100~100,000)",
+    "ui.setup_step": "설정",
+    "ui.loading_error": "WASM 로딩 실패",
+    "ui.need_server": "로컬에서는 HTTP 서버가 필요합니다: python3 -m http.server",
+    "ui.dice_rolling": "운명이 정해지고 있습니다...",
+    "ui.try_again_1": "• 창업 올인 → 더 빠른 성장?",
+    "ui.try_again_2": "• 부동산 올인 → 더 안정적?",
+    "ui.try_again_3": "• 암호 올인 → 하이리스크?",
+    "ui.stats_games": "회 도전",
+    "ui.stats_wins": "달성!",
+    "ui.backstory": "\"이 게임은 한 사람의 꿈에서 시작되었습니다.<br>20억엔을 모으고 싶었던 개발자의 이야기.\"",
+    "ui.goal_achieved": "20억엔 달성!",
+    "ui.goal_continue": "꿈을 이뤘습니다! 계속하시겠습니까?",
+    "ui.end_game": "엔딩 보기",
+    "ui.continue_game": "계속하기",
+    "ui.bankruptcy": "파산",
+    "ui.bankruptcy_desc": "자산이 모두 소진되었습니다.",
+    "ui.dice_area_re": "부동산",
+    "ui.dice_area_stocks": "투자",
+    "ui.dice_area_biz": "사업",
+    "ui.dice_area_fate": "운명",
+
+    "strategy.realestate": "부동산 투자",
+    "strategy.realestate.desc": "레버리지 중심, 안정적 자산 구축",
+    "strategy.stocks": "주식·암호자산",
+    "strategy.stocks.desc": "시장 투자 중심, 변동성 높음",
+    "strategy.business": "창업·비즈니스",
+    "strategy.business.desc": "사업 중심, 최대 승수 가능",
+    "strategy.mixed": "복합 전략",
+    "strategy.mixed.desc": "여러 분야 조합, 밸런스",
+
+    "duration.5": "5년 (초고속)",
+    "duration.10": "10년 (표준)",
+    "duration.15": "15년 (장기)",
+    "duration.20": "20년 (마라톤)",
+
+    "decision.start_business": "창업 시작",
+    "decision.start_business.desc": "MRR 20만엔, 유저 10명으로 시작",
+    "decision.buy_stocks": "주식/암호 매수",
+    "decision.buy_stocks.desc": "현금의 50%를 QQQ와 암호자산에 투자",
+    "decision.save_cash": "비상금 적립",
+    "decision.save_cash.desc": "투자하지 않고 현금 보유 (안전 우선)",
+    "decision.buy_re_1": "부동산 1동 매수",
+    "decision.buy_re_1.desc": "다운페이먼트로 1건 매입",
+    "decision.buy_re_3": "부동산 3동 매수",
+    "decision.buy_re_3.desc": "다운페이먼트로 3건 매입",
+    "decision.refinance": "리파이낸스",
+    "decision.refinance.desc": "대출 조건을 개선하여 캐시플로우 개선",
+    "decision.hire_marketer": "마케팅 인력 채용",
+    "decision.hire_marketer.desc": "-100만엔, 마케팅 부스트",
+    "decision.hire_engineer": "엔지니어 채용",
+    "decision.hire_engineer.desc": "-100만엔, 개발 부스트",
+    "decision.pivot": "피벗",
+    "decision.pivot.desc": "-200만엔, 경쟁 회피",
+    "decision.series_a": "Series A 자금 조달",
+    "decision.series_a.desc": "+2000만엔, 지분 70%",
+    "decision.bootstrap": "부트스트랩",
+    "decision.bootstrap.desc": "외부 자금 없이 독립 성장",
+    "decision.expand_korea": "한국에 진출",
+    "decision.expand_korea.desc": "-500만엔, 해외 확대",
+    "decision.expand_taiwan": "대만에 진출",
+    "decision.expand_taiwan.desc": "-500만엔, 해외 확대",
+    "decision.hold_expansion": "확대 보류",
+    "decision.hold_expansion.desc": "내수에 집중",
+    "decision.start_proptech": "PropTech 창업",
+    "decision.start_proptech.desc": "부동산×테크놀로지 사업 시작",
+    "decision.proptech_marketing": "PropTech 마케팅",
+    "decision.proptech_marketing.desc": "-100만엔, 마케팅 부스트",
+    "decision.proptech_apply_all": "PropTech 전 부동산 적용",
+    "decision.proptech_apply_all.desc": "임대 수입 +5%",
+    "decision.exit_sell_all": "전부 매각해서 엑시트",
+    "decision.exit_sell_all.desc": "전 자산을 현금화",
+    "decision.exit_sell_biz": "사업만 매각",
+    "decision.exit_sell_biz.desc": "사업만 매각",
+    "decision.hold_to_end": "끝까지 유지",
+    "decision.hold_to_end.desc": "엑시트하지 않고 계속",
+    "decision.life_event": "라이프 이벤트",
+    "decision.life_event.desc": "돌발 라이프 이벤트 발생",
+
+    "exit.category.cash": "현금",
+    "exit.category.stocks": "주식",
+    "exit.category.business": "사업",
+    "exit.category.propTech": "PropTech",
+    "exit.category.realestate": "부동산",
+
+    "rank.gold.label": "🥇 Gold",
+    "rank.gold.desc": "목표 달성! 억만장자",
+    "rank.silver.label": "🥈 Silver",
+    "rank.silver.desc": "10억 이상의 자산을 구축",
+    "rank.bronze.label": "🥉 Bronze",
+    "rank.bronze.desc": "5억 이상의 자산을 구축",
+    "rank.iron.label": "⚓ Iron",
+    "rank.iron.desc": "1억 이상의 자산을 구축",
+    "rank.participation.label": "🏅 참가",
+    "rank.participation.desc": "아직 성장의 여지가 있습니다",
+
+    "macro.great": "대성공 🔥",
+    "macro.good": "성공 📈",
+    "macro.moderate": "보통 📊",
+    "macro.poor": "부진 😓",
+    "macro.critical": "위기 😱",
+
+    "glossary.MRR.term": "MRR", "glossary.MRR.short": "Monthly Recurring Revenue",
+    "glossary.MRR.desc": "매월 정기적으로 발생하는 수익", "glossary.MRR.example": "SaaS 월정액 × 계약 수",
+    "glossary.ARR.term": "ARR", "glossary.ARR.short": "Annual Recurring Revenue",
+    "glossary.ARR.desc": "MRR×12, 연간 경상수익", "glossary.ARR.example": "MRR 100만엔 → ARR 1200만엔",
+    "glossary.LTV.term": "LTV", "glossary.LTV.short": "Lifetime Value",
+    "glossary.LTV.desc": "고객이 유치 이후 기간 중에 가져오는 이익", "glossary.LTV.example": "월액 1만 × 12개월 × 3년 = 36만",
+    "glossary.CF.term": "CF", "glossary.CF.short": "Cash Flow",
+    "glossary.CF.desc": "현금의 유출·유입", "glossary.CF.example": "임대 수입 − 대출 상환 = CF",
+    "glossary.SeriesA.term": "Series A", "glossary.SeriesA.short": "시리즈A 자금조달",
+    "glossary.SeriesA.desc": "초기 단계의 대형 자금 조달", "glossary.SeriesA.example": "VC에서 1억엔 조달",
+    "glossary.Exit.term": "Exit", "glossary.Exit.short": "엑시트",
+    "glossary.Exit.desc": "투자 회수 (IPO·M&A)", "glossary.Exit.example": "기업 매각으로 100억엔",
+    "glossary.Refinance.term": "Refinance", "glossary.Refinance.short": "리파이낸스",
+    "glossary.Refinance.desc": "대출 갈아타기로 조건 개선", "glossary.Refinance.example": "금리 3% → 1.5%로 갈아타기",
+    "glossary.Equity.term": "Equity", "glossary.Equity.short": "지분",
+    "glossary.Equity.desc": "주식·지분", "glossary.Equity.example": "창업자 지분 80%",
+    "glossary.PropTech.term": "PropTech", "glossary.PropTech.short": "Property Technology",
+    "glossary.PropTech.desc": "부동산×테크놀로지", "glossary.PropTech.example": "Smart Mansion 관리 앱",
+    "glossary.CAC.term": "CAC", "glossary.CAC.short": "Customer Acquisition Cost",
+    "glossary.CAC.desc": "고객 획득 단가", "glossary.CAC.example": "광고비 10만 ÷ 신규 50명 = 2천엔",
+    "glossary.Bootstrap.term": "Bootstrap", "glossary.Bootstrap.short": "부트스트랩",
+    "glossary.Bootstrap.desc": "외부 자금에 의존하지 않고 성장", "glossary.Bootstrap.example": "자신의 자금으로 창업",
+    "glossary.VC.term": "VC", "glossary.VC.short": "Venture Capital",
+    "glossary.VC.desc": "비상장 기업에 투자하는 기관", "glossary.VC.example": "Sequoia, Andreessen",
+    "glossary.IPO.term": "IPO", "glossary.IPO.short": "Initial Public Offering",
+    "glossary.IPO.desc": "신규 주식 공개, 주식을 처음으로 시장에 공개", "glossary.IPO.example": "동증 1부 상장",
+    "glossary.MA.term": "M&A", "glossary.MA.short": "Mergers and Acquisitions",
+    "glossary.MA.desc": "기업의 합병·매수", "glossary.MA.example": "100억엔으로 매수 제안",
+    "glossary.Multiplier.term": "Multiplier", "glossary.Multiplier.short": "배수",
+    "glossary.Multiplier.desc": "평가액의 배율", "glossary.Multiplier.example": "ARR × 5배 = 평가액",
+    "glossary.PoC.term": "PoC", "glossary.PoC.short": "Proof of Concept",
+    "glossary.PoC.desc": "개념 실증, 실현 가능성의 검증", "glossary.PoC.example": "3개월로 PoC 실시",
+    "glossary.Pivot.term": "Pivot", "glossary.Pivot.short": "피벗",
+    "glossary.Pivot.desc": "사업 방향의 전환", "glossary.Pivot.example": "B2C → B2B로 전환",
+
+    "log.start_business": "사업을 시작했습니다.",
+    "log.start_proptech": "PropTech 사업을 시작했습니다.",
+    "log.buy_stocks": "주식 매수: QQQ {0}, 암호 {1}",
+    "log.save_cash": "현금을 보유했습니다.",
+    "log.buy_re_1": "부동산을 매수했습니다.",
+    "log.buy_re_3": "부동산 3건을 매수했습니다.",
+    "log.refinance": "리파이낸스를 실시했습니다.",
+    "log.hire_marketer": "마케팅 담당을 채용했습니다.",
+    "log.hire_engineer": "엔지니어를 채용했습니다.",
+    "log.pivot": "피벗을 실시했습니다.",
+    "log.series_a": "Series A 자금 조달 완료! +2000만엔",
+    "log.bootstrap": "부트스트랩을 선택했습니다.",
+    "log.expand_korea": "한국에 진출했습니다.",
+    "log.expand_taiwan": "대만에 진출했습니다.",
+    "log.hold_expansion": "확대를 보류했습니다.",
+    "log.proptech_marketing": "PropTech 마케팅을 강화했습니다.",
+    "log.proptech_apply_all": "PropTech를 전 부동산에 적용했습니다.",
+    "log.exit_sell_all": "엑시트를 실시했습니다.",
+    "log.exit_sell_biz": "사업을 매각했습니다.",
+    "log.hold_to_end": "끝까지 유지합니다.",
+    "log.goal_achieved": "목표 {0}를 달성했습니다!",
+
+    "event.re_01.title": "부동산 시장에 파동이 발생. 에리어마다 가격 변동이 있습니다.",
+    "event.re_01.log": "{0}: 부동산 가격 {1} ({2})",
+    "event.re_02.title": "테넌트가 퇴실하였습니다. 공실 기간의 수입 감이 발생합니다.",
+    "event.re_02.no_re": "부동산을 보유하고 있지 않아 영향 없습니다.",
+    "event.re_02.log": "{0}: {1}개월 공실 (−{2})",
+    "event.re_03.title": "새로운 부동산 정보가 들어왔습니다.",
+    "event.re_03.text": "부동산 신축 정보를 획득했습니다. 다음 결정에서 매입 가능.",
+    "event.sc_02.title": "암호 시장에 급변이 발생했습니다.",
+    "event.sc_02.no_crypto": "암호를 보유하고 있지 않아 영향 없습니다.",
+    "event.sc_02.log": "암호: {0} ({1})",
+    "event.sc_04.title": "알트코인에 큰 양폭이 발생.",
+    "event.sc_04.no_crypto": "암호를 보유하고 있지 않아 영향 없습니다.",
+    "event.sc_04.log": "알트코인: {0} ({1})",
+    "event.bz_01.title": "고객 이탈이 발생했습니다.",
+    "event.no_biz": "사업이 활동하고 있지 않아 영향 없습니다.",
+    "event.bz_01.log": "이탈: −{0}명 (−{1}%)",
+    "event.bz_02.title": "제품이 바이럴되었습니다!",
+    "event.bz_02.log": "바이럴: +{0}명 (+{1}%)",
+    "event.bz_03.title": "경쟁 기업이 등장했습니다.",
+    "event.bz_03.text": "경쟁 기업 등장. 성장 페널티: 0.7",
+    "event.bz_06.title": "기업향 대규모 계약 찬스!",
+    "event.bz_06.log": "기업 계약: MRR +{0}, +{1}명",
+    "event.bz_11.title": "정부 DX 보조금이 채택되었습니다.",
+    "event.bz_11.log": "DX 보조금: +{0}",
+    "event.lf_01.title": "건강 문제가 발생. 의료비가 발생합니다.",
+    "event.lf_01.log": "의료비: −{0}",
+    "event.lf_03.title": "친척으로부터 상속재산이 입수되었습니다.",
+    "event.lf_03.log": "상속재산: +{0}",
+    "event.lf_05.title": "강연 의뢰가 있습니다.",
+    "event.lf_05.log": "강연 보수: +{0}",
+
+    "share.template": "리치맨 시뮬레이터\n최종 자산: {0}\n랭크: {1}\n전략: {2}\n년수: {3}년 / {4}년",
+  },
+  ja: {
+    "ui.title": "20億円の夢",
+    "ui.subtitle": "Rich Man Simulator",
+    "ui.start": "ゲーム開始",
+    "ui.resume": "続きから",
+    "ui.glossary": "📖 用語辞典",
+    "ui.next": "次へ →",
+    "ui.decision_prompt": "どうしますか？",
+    "ui.year_result": "📊 今年の結果",
+    "ui.balance_sheet": "📋 貸借対照表",
+    "ui.chart": "📈 年度別推移",
+    "ui.final_result": "🏆 最終結果",
+    "ui.after_tax": "(税後最終資産)",
+    "ui.start_capital": "開始資本",
+    "ui.growth_mult": "成長倍数",
+    "ui.duration": "期間",
+    "ui.asset_breakdown": "📊 資産別内訳 (税後)",
+    "ui.total": "合計",
+    "ui.cash": "現金",
+    "ui.realestate": "不動産",
+    "ui.stocks": "株式/暗号",
+    "ui.business": "事業",
+    "ui.propTech": "PropTech",
+    "ui.try_again": "💡 別の戦略で挑戦してみよう！",
+    "ui.replay": "もう一度プレイ",
+    "ui.copy": "📋 コピー",
+    "ui.share": "📤 共有",
+    "ui.copied": "✅ コピーしました！",
+    "ui.setup_capital": "開始資本を入力してください",
+    "ui.setup_duration": "目標期間を選んでください",
+    "ui.setup_strategy": "好きな戦略を選んでください",
+    "ui.goal": "🎯 目標: 20億円 (固定)",
+    "ui.market": "🌐 市場",
+    "ui.no_change": "変動なし",
+    "ui.loading": "WASMエンジン読込中...",
+    "ui.lang_button": "🌐",
+    "ui.close": "閉じる",
+    "ui.search": "検索...",
+    "ui.year": "Year",
+    "ui.result_suffix": " 結果",
+    "ui.next_year": "翌年へ →",
+    "ui.view_result": "結果を見る →",
+    "ui.goal_progress": "% → 目標 20億円",
+    "ui.capital_unit": "万円単位 (100〜100,000)",
+    "ui.setup_step": "設定",
+    "ui.loading_error": "WASM読込失敗",
+    "ui.need_server": "ローカルではHTTPサーバーが必要です: python3 -m http.server",
+    "ui.dice_rolling": "運命が決まっています...",
+    "ui.try_again_1": "• 創業オールイン → より速い成長？",
+    "ui.try_again_2": "• 不動産オールイン → より安定？",
+    "ui.try_again_3": "• 暗号オールイン → ハイリスク？",
+    "ui.stats_games": "回挑戦",
+    "ui.stats_wins": "達成！",
+    "ui.backstory": "\"このゲームはある人の夢から始まりました。<br>20億円を貯めたかった開発者の物語。\"",
+    "ui.goal_achieved": "20億円達成！",
+    "ui.goal_continue": "夢を叶えました！続けますか？",
+    "ui.end_game": "エンディングを見る",
+    "ui.continue_game": "続ける",
+    "ui.bankruptcy": "破産",
+    "ui.bankruptcy_desc": "資産がすべて消えました。",
+    "ui.dice_area_re": "不動産",
+    "ui.dice_area_stocks": "投資",
+    "ui.dice_area_biz": "事業",
+    "ui.dice_area_fate": "運命",
+
+    "strategy.realestate": "不動産投資",
+    "strategy.realestate.desc": "レバレッジ中心、安定的資産構築",
+    "strategy.stocks": "株式・暗号資産",
+    "strategy.stocks.desc": "市場投資中心、変動性高い",
+    "strategy.business": "創業・ビジネス",
+    "strategy.business.desc": "事業中心、最大乗数可能",
+    "strategy.mixed": "複合戦略",
+    "strategy.mixed.desc": "複数分野組合せ、バランス",
+
+    "duration.5": "5年 (超高速)",
+    "duration.10": "10年 (標準)",
+    "duration.15": "15年 (長期)",
+    "duration.20": "20年 (マラソン)",
+
+    "decision.start_business": "事業を開始する",
+    "decision.start_business.desc": "MRR 20万円、ユーザー10人で開始",
+    "decision.buy_stocks": "株式を購入",
+    "decision.buy_stocks.desc": "現金の50%をQQQと暗号に投資",
+    "decision.save_cash": "現金を保持",
+    "decision.save_cash.desc": "投資せず現金を貯える",
+    "decision.buy_re_1": "不動産を1件購入",
+    "decision.buy_re_1.desc": "ダウンペイメントで1件購入",
+    "decision.buy_re_3": "不動産を3件購入",
+    "decision.buy_re_3.desc": "ダウンペイメントで3件購入",
+    "decision.refinance": "リファイナンス",
+    "decision.refinance.desc": "ローン条件を改善しキャッシュフロー改善",
+    "decision.hire_marketer": "マーケティング担当を採用",
+    "decision.hire_marketer.desc": "−100万円、マーケティングブースト",
+    "decision.hire_engineer": "エンジニアを採用",
+    "decision.hire_engineer.desc": "−100万円、開発ブースト",
+    "decision.pivot": "ピボット",
+    "decision.pivot.desc": "−200万円、競合回避",
+    "decision.series_a": "Series A資金調達",
+    "decision.series_a.desc": "+2000万円、ステーク70%",
+    "decision.bootstrap": "ブートストラップ",
+    "decision.bootstrap.desc": "外部資金なしで独立成長",
+    "decision.expand_korea": "韓国に進出",
+    "decision.expand_korea.desc": "−500万円、海外拡大",
+    "decision.expand_taiwan": "台湾に進出",
+    "decision.expand_taiwan.desc": "−500万円、海外拡大",
+    "decision.hold_expansion": "拡大見送り",
+    "decision.hold_expansion.desc": "内需に集中",
+    "decision.start_proptech": "PropTech事業を開始",
+    "decision.start_proptech.desc": "不動産×テクノロジー事業を開始",
+    "decision.proptech_marketing": "PropTechマーケティング",
+    "decision.proptech_marketing.desc": "−100万円、マーケティングブースト",
+    "decision.proptech_apply_all": "PropTechを全不動産に適用",
+    "decision.proptech_apply_all.desc": "賃料収入+5%",
+    "decision.exit_sell_all": "全部売却してエグジット",
+    "decision.exit_sell_all.desc": "全アセットを現金化",
+    "decision.exit_sell_biz": "事業だけ売却",
+    "decision.exit_sell_biz.desc": "事業のみ売却",
+    "decision.hold_to_end": "最後まで保持",
+    "decision.hold_to_end.desc": "エグジットせず続ける",
+    "decision.life_event": "ライフイベント",
+    "decision.life_event.desc": "突発ライフイベントが発生",
+
+    "exit.category.cash": "現金",
+    "exit.category.stocks": "株式",
+    "exit.category.business": "事業",
+    "exit.category.propTech": "PropTech",
+    "exit.category.realestate": "不動産",
+
+    "rank.gold.label": "🥇 Gold",
+    "rank.gold.desc": "目標達成！億万長者",
+    "rank.silver.label": "🥈 Silver",
+    "rank.silver.desc": "10億以上の資産を構築",
+    "rank.bronze.label": "🥉 Bronze",
+    "rank.bronze.desc": "5億以上の資産を構築",
+    "rank.iron.label": "⚓ Iron",
+    "rank.iron.desc": "1億以上の資産を構築",
+    "rank.participation.label": "🏅 参加賞",
+    "rank.participation.desc": "まだまだ成長の余地あり",
+
+    "macro.great": "大成功 🔥",
+    "macro.good": "成功 📈",
+    "macro.moderate": "普通 📊",
+    "macro.poor": "不調 😓",
+    "macro.critical": "危機 😱",
+
+    "glossary.MRR.term": "MRR", "glossary.MRR.short": "Monthly Recurring Revenue",
+    "glossary.MRR.desc": "毎月定期収益", "glossary.MRR.example": "SaaSの月額料 × 契約数",
+    "glossary.ARR.term": "ARR", "glossary.ARR.short": "Annual Recurring Revenue",
+    "glossary.ARR.desc": "MRR×12、年間経常収益", "glossary.ARR.example": "MRR 100万円 → ARR 1200万円",
+    "glossary.LTV.term": "LTV", "glossary.LTV.short": "Lifetime Value",
+    "glossary.LTV.desc": "顧客が契約期間中にもたらす利益", "glossary.LTV.example": "月額1万 × 12ヶ月 × 3年 = 36万",
+    "glossary.CF.term": "CF", "glossary.CF.short": "Cash Flow",
+    "glossary.CF.desc": "現金の流出・流入", "glossary.CF.example": "家賃収入 − ローン返済 = CF",
+    "glossary.SeriesA.term": "Series A", "glossary.SeriesA.short": "シリーズA資金調達",
+    "glossary.SeriesA.desc": "初期段階の大型資金調達", "glossary.SeriesA.example": "VCから1億円調達",
+    "glossary.Exit.term": "Exit", "glossary.Exit.short": "エグジット",
+    "glossary.Exit.desc": "投資回収（IPO・M&A）", "glossary.Exit.example": "企業売却で100億円",
+    "glossary.Refinance.term": "Refinance", "glossary.Refinance.short": "リファイナンス",
+    "glossary.Refinance.desc": "借り換えで条件改善", "glossary.Refinance.example": "金利3% → 1.5%に借り換え",
+    "glossary.Equity.term": "Equity", "glossary.Equity.short": "株式・持分",
+    "glossary.Equity.desc": "株式・持分", "glossary.Equity.example": "創業者持分80%",
+    "glossary.PropTech.term": "PropTech", "glossary.PropTech.short": "Property Technology",
+    "glossary.PropTech.desc": "不動産×テクノロジー", "glossary.PropTech.example": "Smart Mansion管理アプリ",
+    "glossary.CAC.term": "CAC", "glossary.CAC.short": "Customer Acquisition Cost",
+    "glossary.CAC.desc": "顧客獲得単価", "glossary.CAC.example": "広告費10万 ÷ 新規50人 = 2千円",
+    "glossary.Bootstrap.term": "Bootstrap", "glossary.Bootstrap.short": "ブートストラップ",
+    "glossary.Bootstrap.desc": "外部資金に頼らず成長", "glossary.Bootstrap.example": "自身の資金で起業",
+    "glossary.VC.term": "VC", "glossary.VC.short": "Venture Capital",
+    "glossary.VC.desc": "未公開企業に投資する機関", "glossary.VC.example": "Sequoia, Andreessen",
+    "glossary.IPO.term": "IPO", "glossary.IPO.short": "Initial Public Offering",
+    "glossary.IPO.desc": "新規株式公開、株式を初めて市場に公開", "glossary.IPO.example": "東証一部上場",
+    "glossary.MA.term": "M&A", "glossary.MA.short": "Mergers and Acquisitions",
+    "glossary.MA.desc": "企業の統合・買収", "glossary.MA.example": "100億で買収提案",
+    "glossary.Multiplier.term": "Multiplier", "glossary.Multiplier.short": "マルチプライヤー",
+    "glossary.Multiplier.desc": "評価額の倍率", "glossary.Multiplier.example": "ARR × 5倍 = 評価額",
+    "glossary.PoC.term": "PoC", "glossary.PoC.short": "Proof of Concept",
+    "glossary.PoC.desc": "概念実証、実現可能性の検証", "glossary.PoC.example": "3ヶ月でPoC実施",
+    "glossary.Pivot.term": "Pivot", "glossary.Pivot.short": "ピボット",
+    "glossary.Pivot.desc": "事業方向の転換", "glossary.Pivot.example": "B2C → B2Bへ転換",
+
+    "log.start_business": "事業を開始しました。",
+    "log.start_proptech": "PropTech事業を開始しました。",
+    "log.buy_stocks": "株式購入: QQQ {0}, 暗号 {1}",
+    "log.save_cash": "現金を保持しました。",
+    "log.buy_re_1": "不動産を購入しました。",
+    "log.buy_re_3": "不動産3件を購入しました。",
+    "log.refinance": "リファイナンスを実施しました。",
+    "log.hire_marketer": "マーケティング担当を採用しました。",
+    "log.hire_engineer": "エンジニアを採用しました。",
+    "log.pivot": "ピボットを実施しました。",
+    "log.series_a": "Series A資金調達完了！+2000万円",
+    "log.bootstrap": "ブートストラップを選択しました。",
+    "log.expand_korea": "韓国に進出しました。",
+    "log.expand_taiwan": "台湾に進出しました。",
+    "log.hold_expansion": "拡大を見送りました。",
+    "log.proptech_marketing": "PropTechのマーケティングを強化しました。",
+    "log.proptech_apply_all": "PropTechを全不動産に適用しました。",
+    "log.exit_sell_all": "エグジットを実施しました。",
+    "log.exit_sell_biz": "事業を売却しました。",
+    "log.hold_to_end": "最後まで保持します。",
+    "log.goal_achieved": "目標{0}を達成しました！",
+
+    "event.re_01.title": "不動産市場の波乱が発生。エリアごとに価格変動があります。",
+    "event.re_01.log": "{0}: 不動産価格 {1} ({2})",
+    "event.re_02.title": "テナントが退室しました。空室期間の収入減が発生します。",
+    "event.re_02.no_re": "不動産を保有していないため影響ありません。",
+    "event.re_02.log": "{0}: {1}ヶ月の空室（−{2}）",
+    "event.re_03.title": "新しい不動産の新着情報が届きました。",
+    "event.re_03.text": "不動産の新着情報を取得しました。次の決定で購入できます。",
+    "event.sc_02.title": "暗号市場に急変が発生しました。",
+    "event.sc_02.no_crypto": "暗号を保有していないため影響ありません。",
+    "event.sc_02.log": "暗号: {0} ({1})",
+    "event.sc_04.title": "アルトコインに大きな両揺れが発生。",
+    "event.sc_04.no_crypto": "暗号を保有していないため影響ありません。",
+    "event.sc_04.log": "アルトコイン: {0} ({1})",
+    "event.bz_01.title": "顧客のチャーンが発生しました。",
+    "event.no_biz": "事業が活動していないため影響ありません。",
+    "event.bz_01.log": "チャーン: −{0}人 (−{1}%)",
+    "event.bz_02.title": "プロダクトがバイラルしました！",
+    "event.bz_02.log": "バイラル: +{0}人 (+{1}%)",
+    "event.bz_03.title": "競合企業が登場しました。",
+    "event.bz_03.text": "競合企業登場。成長ペナルティ: 0.7",
+    "event.bz_06.title": "企業向け大規模契約チャンス！",
+    "event.bz_06.log": "企業契約: MRR +{0}, +{1}人",
+    "event.bz_11.title": "政府のDX補助金が採択されました。",
+    "event.bz_11.log": "DX補助金: +{0}",
+    "event.lf_01.title": "健康問題が発生。医療費がかかります。",
+    "event.lf_01.log": "医療費: −{0}",
+    "event.lf_03.title": "親族からの相続財産が入手しました。",
+    "event.lf_03.log": "相続財産: +{0}",
+    "event.lf_05.title": "講演依頼があります。",
+    "event.lf_05.log": "講演報酬: +{0}",
+
+    "share.template": "リッチマン シミュレーター\n最終資産: {0}\nランク: {1}\n戦略: {2}\n年数: {3}年 / {4}年",
+  },
+  en: {
+    "ui.title": "20億円の夢",
+    "ui.subtitle": "Rich Man Simulator",
+    "ui.start": "Start Game",
+    "ui.resume": "Continue",
+    "ui.glossary": "📖 Glossary",
+    "ui.next": "Next →",
+    "ui.decision_prompt": "What will you do?",
+    "ui.year_result": "📊 This Year's Result",
+    "ui.balance_sheet": "📋 Balance Sheet",
+    "ui.chart": "📈 Yearly Trend",
+    "ui.final_result": "🏆 Final Result",
+    "ui.after_tax": "(Final assets after tax)",
+    "ui.start_capital": "Starting Capital",
+    "ui.growth_mult": "Growth Multiple",
+    "ui.duration": "Duration",
+    "ui.asset_breakdown": "📊 Asset Breakdown (after tax)",
+    "ui.total": "Total",
+    "ui.cash": "Cash",
+    "ui.realestate": "Real Estate",
+    "ui.stocks": "Stocks/Crypto",
+    "ui.business": "Business",
+    "ui.propTech": "PropTech",
+    "ui.try_again": "💡 Try a different strategy!",
+    "ui.replay": "Play Again",
+    "ui.copy": "📋 Copy",
+    "ui.share": "📤 Share",
+    "ui.copied": "✅ Copied!",
+    "ui.setup_capital": "Enter your starting capital",
+    "ui.setup_duration": "Choose target duration",
+    "ui.setup_strategy": "Choose your preferred strategy",
+    "ui.goal": "🎯 Goal: ¥2B (fixed)",
+    "ui.market": "🌐 Market",
+    "ui.no_change": "No change",
+    "ui.loading": "Loading WASM engine...",
+    "ui.lang_button": "🌐",
+    "ui.close": "Close",
+    "ui.search": "Search...",
+    "ui.year": "Year",
+    "ui.result_suffix": " Result",
+    "ui.next_year": "Next Year →",
+    "ui.view_result": "View Result →",
+    "ui.goal_progress": "% → Goal ¥2B",
+    "ui.capital_unit": "In ¥10k units (100–100,000)",
+    "ui.setup_step": "Setup",
+    "ui.loading_error": "WASM loading failed",
+    "ui.need_server": "HTTP server required locally: python3 -m http.server",
+    "ui.dice_rolling": "Determining your fate...",
+    "ui.try_again_1": "• All-in on startup → Faster growth?",
+    "ui.try_again_2": "• All-in on real estate → More stable?",
+    "ui.try_again_3": "• All-in on crypto → High risk?",
+    "ui.stats_games": "games played",
+    "ui.stats_wins": "wins!",
+    "ui.backstory": "\"This game started with one person's dream.<br>The story of a developer who wanted to save ¥2 billion.\"",
+    "ui.goal_achieved": "¥2 billion achieved!",
+    "ui.goal_continue": "Dream fulfilled! Continue?",
+    "ui.end_game": "View Ending",
+    "ui.continue_game": "Continue",
+    "ui.bankruptcy": "Bankrupt",
+    "ui.bankruptcy_desc": "All assets depleted.",
+    "ui.dice_area_re": "Real Estate",
+    "ui.dice_area_stocks": "Investments",
+    "ui.dice_area_biz": "Business",
+    "ui.dice_area_fate": "Fate",
+
+    "strategy.realestate": "Real Estate",
+    "strategy.realestate.desc": "Leverage-focused, stable asset building",
+    "strategy.stocks": "Stocks & Crypto",
+    "strategy.stocks.desc": "Market-focused, high volatility",
+    "strategy.business": "Startup & Business",
+    "strategy.business.desc": "Business-focused, max multiplier potential",
+    "strategy.mixed": "Mixed Strategy",
+    "strategy.mixed.desc": "Diversified across sectors, balanced",
+
+    "duration.5": "5 years (ultra-fast)",
+    "duration.10": "10 years (standard)",
+    "duration.15": "15 years (long-term)",
+    "duration.20": "20 years (marathon)",
+
+    "decision.start_business": "Start a Business",
+    "decision.start_business.desc": "AI agent SaaS MVP (¥1M~)",
+    "decision.buy_stocks": "Buy Stocks/Crypto",
+    "decision.buy_stocks.desc": "Invest 50% cash in QQQ & crypto",
+    "decision.save_cash": "Save Cash",
+    "decision.save_cash.desc": "Hold cash (safety first)",
+    "decision.buy_re_1": "Buy 1 Property",
+    "decision.buy_re_1.desc": "Down payment on 1 property",
+    "decision.buy_re_3": "Buy 3 Properties",
+    "decision.buy_re_3.desc": "Down payment on 3 properties",
+    "decision.refinance": "Refinance",
+    "decision.refinance.desc": "Improve loan terms, better cash flow",
+    "decision.hire_marketer": "Hire Marketer",
+    "decision.hire_marketer.desc": "−¥1M, marketing boost",
+    "decision.hire_engineer": "Hire Engineer",
+    "decision.hire_engineer.desc": "−¥1M, dev boost",
+    "decision.pivot": "Pivot",
+    "decision.pivot.desc": "−¥2M, avoid competition",
+    "decision.series_a": "Series A Funding",
+    "decision.series_a.desc": "+¥20M, 70% stake",
+    "decision.bootstrap": "Bootstrap",
+    "decision.bootstrap.desc": "Grow without external funding",
+    "decision.expand_korea": "Expand to Korea",
+    "decision.expand_korea.desc": "−¥5M, overseas expansion",
+    "decision.expand_taiwan": "Expand to Taiwan",
+    "decision.expand_taiwan.desc": "−¥5M, overseas expansion",
+    "decision.hold_expansion": "Hold Expansion",
+    "decision.hold_expansion.desc": "Focus on domestic market",
+    "decision.start_proptech": "Start PropTech",
+    "decision.start_proptech.desc": "Real estate × technology business",
+    "decision.proptech_marketing": "PropTech Marketing",
+    "decision.proptech_marketing.desc": "−¥1M, marketing boost",
+    "decision.proptech_apply_all": "Apply PropTech to All Properties",
+    "decision.proptech_apply_all.desc": "Rental income +5%",
+    "decision.exit_sell_all": "Sell Everything & Exit",
+    "decision.exit_sell_all.desc": "Liquidate all assets",
+    "decision.exit_sell_biz": "Sell Business Only",
+    "decision.exit_sell_biz.desc": "Sell business only",
+    "decision.hold_to_end": "Hold to the End",
+    "decision.hold_to_end.desc": "Keep going without exit",
+    "decision.life_event": "Life Event",
+    "decision.life_event.desc": "Random life event occurs",
+
+    "exit.category.cash": "Cash",
+    "exit.category.stocks": "Stocks",
+    "exit.category.business": "Business",
+    "exit.category.propTech": "PropTech",
+    "exit.category.realestate": "Real Estate",
+
+    "rank.gold.label": "🥇 Gold",
+    "rank.gold.desc": "Goal achieved! Billionaire!",
+    "rank.silver.label": "🥈 Silver",
+    "rank.silver.desc": "Built ¥1B+ in assets",
+    "rank.bronze.label": "🥉 Bronze",
+    "rank.bronze.desc": "Built ¥500M+ in assets",
+    "rank.iron.label": "⚓ Iron",
+    "rank.iron.desc": "Built ¥100M+ in assets",
+    "rank.participation.label": "🏅 Participant",
+    "rank.participation.desc": "Still room for growth",
+
+    "macro.great": "Great 🔥",
+    "macro.good": "Good 📈",
+    "macro.moderate": "Moderate 📊",
+    "macro.poor": "Poor 😓",
+    "macro.critical": "Critical 😱",
+
+    "glossary.MRR.term": "MRR", "glossary.MRR.short": "Monthly Recurring Revenue",
+    "glossary.MRR.desc": "Revenue generated every month", "glossary.MRR.example": "SaaS monthly fee × contracts",
+    "glossary.ARR.term": "ARR", "glossary.ARR.short": "Annual Recurring Revenue",
+    "glossary.ARR.desc": "MRR×12, annual recurring revenue", "glossary.ARR.example": "MRR ¥1M → ARR ¥12M",
+    "glossary.LTV.term": "LTV", "glossary.LTV.short": "Lifetime Value",
+    "glossary.LTV.desc": "Profit a customer brings over their lifetime", "glossary.LTV.example": "¥10k/mo × 12mo × 3yr = ¥360k",
+    "glossary.CF.term": "CF", "glossary.CF.short": "Cash Flow",
+    "glossary.CF.desc": "Cash inflow and outflow", "glossary.CF.example": "Rental income − loan payment = CF",
+    "glossary.SeriesA.term": "Series A", "glossary.SeriesA.short": "Series A Funding",
+    "glossary.SeriesA.desc": "Large early-stage funding round", "glossary.SeriesA.example": "¥100M raised from VC",
+    "glossary.Exit.term": "Exit", "glossary.Exit.short": "Exit",
+    "glossary.Exit.desc": "Investment recovery (IPO/M&A)", "glossary.Exit.example": "Sold company for ¥10B",
+    "glossary.Refinance.term": "Refinance", "glossary.Refinance.short": "Refinance",
+    "glossary.Refinance.desc": "Switch loans for better terms", "glossary.Refinance.example": "Interest 3% → 1.5%",
+    "glossary.Equity.term": "Equity", "glossary.Equity.short": "Equity / Ownership",
+    "glossary.Equity.desc": "Shares / ownership stake", "glossary.Equity.example": "Founder equity 80%",
+    "glossary.PropTech.term": "PropTech", "glossary.PropTech.short": "Property Technology",
+    "glossary.PropTech.desc": "Real estate × technology", "glossary.PropTech.example": "Smart Mansion management app",
+    "glossary.CAC.term": "CAC", "glossary.CAC.short": "Customer Acquisition Cost",
+    "glossary.CAC.desc": "Cost to acquire one customer", "glossary.CAC.example": "¥100k ads ÷ 50 new users = ¥2k",
+    "glossary.Bootstrap.term": "Bootstrap", "glossary.Bootstrap.short": "Bootstrap",
+    "glossary.Bootstrap.desc": "Grow without external funding", "glossary.Bootstrap.example": "Self-fund your startup",
+    "glossary.VC.term": "VC", "glossary.VC.short": "Venture Capital",
+    "glossary.VC.desc": "Firms investing in private companies", "glossary.VC.example": "Sequoia, Andreessen",
+    "glossary.IPO.term": "IPO", "glossary.IPO.short": "Initial Public Offering",
+    "glossary.IPO.desc": "First public stock offering", "glossary.IPO.example": "Listed on TSE First Section",
+    "glossary.MA.term": "M&A", "glossary.MA.short": "Mergers and Acquisitions",
+    "glossary.MA.desc": "Company mergers and acquisitions", "glossary.MA.example": "¥10B acquisition proposal",
+    "glossary.Multiplier.term": "Multiplier", "glossary.Multiplier.short": "Multiplier",
+    "glossary.Multiplier.desc": "Valuation multiplier", "glossary.Multiplier.example": "ARR × 5x = valuation",
+    "glossary.PoC.term": "PoC", "glossary.PoC.short": "Proof of Concept",
+    "glossary.PoC.desc": "Concept verification, feasibility check", "glossary.PoC.example": "3-month PoC",
+    "glossary.Pivot.term": "Pivot", "glossary.Pivot.short": "Pivot",
+    "glossary.Pivot.desc": "Change business direction", "glossary.Pivot.example": "B2C → B2B",
+
+    "log.start_business": "Started a business.",
+    "log.start_proptech": "Started a PropTech business.",
+    "log.buy_stocks": "Bought stocks: QQQ {0}, crypto {1}",
+    "log.save_cash": "Held cash.",
+    "log.buy_re_1": "Purchased real estate.",
+    "log.buy_re_3": "Purchased 3 real estate properties.",
+    "log.refinance": "Refinanced loans.",
+    "log.hire_marketer": "Hired a marketer.",
+    "log.hire_engineer": "Hired an engineer.",
+    "log.pivot": "Pivoted the business.",
+    "log.series_a": "Series A funding complete! +¥20M",
+    "log.bootstrap": "Chose to bootstrap.",
+    "log.expand_korea": "Expanded to Korea.",
+    "log.expand_taiwan": "Expanded to Taiwan.",
+    "log.hold_expansion": "Held off on expansion.",
+    "log.proptech_marketing": "Boosted PropTech marketing.",
+    "log.proptech_apply_all": "Applied PropTech to all properties.",
+    "log.exit_sell_all": "Exited — sold everything.",
+    "log.exit_sell_biz": "Sold the business.",
+    "log.hold_to_end": "Holding to the end.",
+    "log.goal_achieved": "Goal {0} achieved!",
+
+    "event.re_01.title": "Real estate market turmoil. Prices vary by area.",
+    "event.re_01.log": "{0}: RE price {1} ({2})",
+    "event.re_02.title": "A tenant moved out. Vacancy income loss occurs.",
+    "event.re_02.no_re": "No real estate owned — no impact.",
+    "event.re_02.log": "{0}: {1} months vacant (−{2})",
+    "event.re_03.title": "New real estate opportunity found.",
+    "event.re_03.text": "Got new property info. Can buy in next decision.",
+    "event.sc_02.title": "Crypto market sudden change.",
+    "event.sc_02.no_crypto": "No crypto held — no impact.",
+    "event.sc_02.log": "Crypto: {0} ({1})",
+    "event.sc_04.title": "Altcoin big swing.",
+    "event.sc_04.no_crypto": "No crypto held — no impact.",
+    "event.sc_04.log": "Altcoin: {0} ({1})",
+    "event.bz_01.title": "Customer churn occurred.",
+    "event.no_biz": "No active business — no impact.",
+    "event.bz_01.log": "Churn: −{0} users (−{1}%)",
+    "event.bz_02.title": "Product went viral!",
+    "event.bz_02.log": "Viral: +{0} users (+{1}%)",
+    "event.bz_03.title": "A competitor appeared.",
+    "event.bz_03.text": "Competitor appeared. Growth penalty: 0.7",
+    "event.bz_06.title": "Enterprise deal opportunity!",
+    "event.bz_06.log": "Enterprise contract: MRR +{0}, +{1} users",
+    "event.bz_11.title": "Government DX grant approved.",
+    "event.bz_11.log": "DX grant: +{0}",
+    "event.lf_01.title": "Health issue. Medical expenses incurred.",
+    "event.lf_01.log": "Medical: −{0}",
+    "event.lf_03.title": "Inheritance received from relatives.",
+    "event.lf_03.log": "Inheritance: +{0}",
+    "event.lf_05.title": "Speaking engagement offered.",
+    "event.lf_05.log": "Speaking fee: +{0}",
+
+    "share.template": "Rich Man Simulator\nFinal assets: {0}\nRank: {1}\nStrategy: {2}\nYears: {3} / {4}",
+  }
 };
 
-const TOKYO_AREAS = [
-  { name: 'Meguro', basePrice: [1700, 2200], rentRate: [0.045, 0.060] },
-  { name: 'Shinagawa', basePrice: [1800, 2400], rentRate: [0.045, 0.058] },
-  { name: 'Ebisu', basePrice: [1900, 2500], rentRate: [0.048, 0.062] },
-  { name: 'Shibuya', basePrice: [2000, 2800], rentRate: [0.050, 0.065] },
-  { name: 'Setagaya', basePrice: [1500, 2100], rentRate: [0.042, 0.055] },
-  { name: 'Nakano', basePrice: [1400, 1900], rentRate: [0.045, 0.058] },
-  { name: 'Koto', basePrice: [1600, 2100], rentRate: [0.046, 0.056] },
-  { name: 'Adachi', basePrice: [1200, 1700], rentRate: [0.050, 0.065] },
-];
-
-// === 2. GAME STATE FACTORY ===
-let game;
-
-function createInitialState() {
-  return {
-    startCapital: 0, goal: 200000, duration: 10, strategy: '',
-    year: 0, cash: 0, realEstate: [],
-    stocks: { qqq: 0, crypto: 0, qqqCost: 0, cryptoCost: 0 },
-    business: { mrr: 0, users: 0, value: 0, cash: 0, stake: 1.0, employees: 0, active: false, competitor: false, growthPenalty: 1.0, marketingBoost: false, devBoost: false, pivotDone: false },
-    proptech: { mrr: 0, users: 0, value: 0, active: false, propertyBoost: 0, marketingBoost: false },
-    emergency: 0, history: [], log: [],
-    gameOver: false, seriesA: false, seriesB: false, expandedTo: null, exited: false,
-    pendingEvents: [], saveVersion: 1,
-  };
+function t(key) {
+  var lang = I18N[currentLang] || I18N.en;
+  var val = lang[key];
+  if (val === undefined) {
+    val = I18N.en[key];
+    if (val === undefined) val = key;
+  }
+  return val;
 }
 
-// === 3. DICE & RNG UTILITIES ===
-function rollD20() { return Math.floor(Math.random() * 20) + 1; }
-function randomBetween(min, max) { return Math.random() * (max - min) + min; }
-function randomFromArray(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-
-function rollOutcome(roll, bonus) {
-  bonus = bonus || 0;
-  const effective = Math.max(1, Math.min(20, roll + bonus));
-  let tier, label, multiplier;
-  if (effective >= 17) { tier = 'great'; label = '대성공 🔥'; multiplier = randomBetween(2.0, 2.5); }
-  else if (effective >= 13) { tier = 'good'; label = '성공 📈'; multiplier = randomBetween(1.3, 1.5); }
-  else if (effective >= 8) { tier = 'moderate'; label = '보통 📊'; multiplier = randomBetween(0.9, 1.1); }
-  else if (effective >= 4) { tier = 'poor'; label = '부진 😓'; multiplier = randomBetween(0.5, 0.7); }
-  else { tier = 'critical'; label = '위기 😱'; multiplier = randomBetween(0.1, 0.3); }
-  return { tier: tier, label: label, multiplier: multiplier, effectiveRoll: effective };
+function tFmt(key, args) {
+  var template = t(key);
+  if (!args) return template;
+  var result = template;
+  for (var i = 0; i < args.length; i++) {
+    result = result.replace('{' + i + '}', args[i]);
+  }
+  return result;
 }
 
-// === 4. FORMAT HELPERS ===
+function translateLogItem(logEntry) {
+  // log entries from Rust are keys like "log.start_business" or "log.buy_stocks:val1:val2"
+  if (!logEntry || typeof logEntry !== 'string') return logEntry;
+  var parts = logEntry.split(':');
+  var key = parts[0];
+  // Check if it's a known log key
+  var hasKey = (I18N[currentLang] && I18N[currentLang][key]) || I18N.en[key];
+  if (!hasKey) return logEntry; // not a translation key, return as-is
+  var args = parts.slice(1);
+  return tFmt(key, args);
+}
+
+function translateEventFlavor(flavor) {
+  if (!flavor || typeof flavor !== 'string') return flavor;
+  return t(flavor);
+}
+
+function translateEventLog(logItem) {
+  if (!logItem || typeof logItem !== 'string') return logItem;
+  // log items like "event.re_01.log:area:price:pct"
+  var parts = logItem.split(':');
+  var key = parts[0];
+  var hasKey = (I18N[currentLang] && I18N[currentLang][key]) || I18N.en[key];
+  if (!hasKey) return logItem;
+  var args = parts.slice(1);
+  return tFmt(key, args);
+}
+
+function translateEventLogs(logs) {
+  if (!logs) return [];
+  return logs.map(function(l) { return translateEventLog(l); });
+}
+
+function getLangLabel() {
+  if (currentLang === 'ko') return '한국어';
+  if (currentLang === 'ja') return '日本語';
+  return 'English';
+}
+
+function cycleLang() {
+  var idx = LANGS.indexOf(currentLang);
+  idx = (idx + 1) % LANGS.length;
+  currentLang = LANGS[idx];
+  localStorage.setItem('richman-lang', currentLang);
+}
+
+// === INIT WASM ===
+async function initWasm() {
+  try {
+    await init();
+    renderTitle();
+  } catch (e) {
+    app.innerHTML = '<div style="padding:24px;text-align:center;color:var(--red)">' + t('ui.loading_error') + ': ' + e.message + '<br><br>' + t('ui.need_server') + '</div>';
+  }
+}
+
+// === FORMAT HELPERS (JS-side, for display) ===
 function formatYen(wan) {
   if (wan >= 10000) return (wan / 10000).toFixed(1).replace(/\.0$/, '') + '億円';
   return Math.round(wan).toLocaleString() + '万円';
 }
 function formatPercent(num) { return (num >= 0 ? '+' : '') + (Math.round(num * 1000) / 10) + '%'; }
-
 function processEventText(text) {
   return text.replace(/\[term:([^\]]+)\]/g, function(m, key) {
     return '<span class="term" data-term="' + key + '">' + key + '</span>';
   });
 }
 
-// === 5. EVENT SCENARIO LIBRARY ===
-const EVENTS = {
-  re_01: { trigger: function(s) { return s.realEstate.length > 0; }, weight: 20,
-    flavor: function(s) { var c = randomBetween(-0.03, 0.12); var d = c >= 0 ? '상승' : '하락';
-      return { title: '부동산 시장 ' + d, text: '도쿄 부동산 시장이 ' + formatPercent(c) + ' ' + d + '했습니다.',
-        apply: function(s) { s.realEstate.forEach(function(p) { p.valueChange += c; }); } }; } },
-  re_02: { trigger: function(s) { return s.realEstate.length > 0; }, weight: 15,
-    flavor: function(s) { var vm = Math.floor(randomBetween(1, 4)); var p = s.realEstate[Math.floor(Math.random() * s.realEstate.length)];
-      return { title: p.area + ' 공실 발생', text: p.area + '의 ' + p.type + '이 ' + vm + '개월 공실되었습니다.',
-        apply: function(s) { p.occupiedMonths = 12 - vm; } }; } },
-  re_03: { trigger: function(s) { return s.cash >= 200; }, weight: 10,
-    flavor: function(s) { return { title: '매수 기회', text: randomFromArray(TOKYO_AREAS).name + '에 좋은 조건의 1K 매물이 나왔습니다.',
-      apply: function(s) {} }; } },
-  sc_02: { trigger: function(s) { return s.stocks.crypto > 0; }, weight: 20,
-    flavor: function(s) { var c = randomBetween(-0.20, 1.50); var up = c >= 0;
-      return { title: up ? '암호자산 폭등! 🚀' : '암호자산 급락 💀', text: 'BTC/알트코인 시장이 ' + formatPercent(c) + ' 변동.',
-        apply: function(s) { s.stocks.crypto = Math.round(s.stocks.crypto * (1 + c)); } }; } },
-  sc_04: { trigger: function(s) { return s.stocks.crypto > 0; }, weight: 12,
-    flavor: function(s) { var c = randomBetween(-0.50, 3.00);
-      return { title: '알트코인 폭등/폭락', text: '알트코인 시장이 ' + formatPercent(c) + ' 변동했습니다.',
-        apply: function(s) { s.stocks.crypto = Math.max(0, Math.round(s.stocks.crypto * (1 + c))); } }; } },
-  bz_01: { trigger: function(s) { return s.business.active && s.business.users > 5; }, weight: 15,
-    flavor: function(s) { var lr = randomBetween(0.05, 0.20); var lu = Math.round(s.business.users * lr);
-      return { title: '고객 이탈', text: lu + '명의 유료 고객이 이탈했습니다. [term:MRR]이 감소합니다.',
-        apply: function(s) { s.business.users -= lu; s.business.mrr = Math.round(s.business.mrr * (1 - lr)); } }; } },
-  bz_02: { trigger: function(s) { return s.business.active; }, weight: 15,
-    flavor: function(s) { var gr = randomBetween(0.30, 1.00); var nu = Math.round(s.business.users * gr);
-      return { title: '바이럴 효과! 📣', text: 'SaaS 제품이 업계 커뮤니티에서 화제! 유료 ' + nu + '명 신규 가입. [term:MRR] 상승.',
-        apply: function(s) { s.business.users += nu; var ar = s.business.users > 0 ? s.business.mrr / Math.max(1, s.business.users - nu) : 2; s.business.mrr += Math.round(nu * ar); } }; } },
-  bz_03: { trigger: function(s) { return s.business.active && s.business.mrr > 50; }, weight: 10,
-    flavor: function(s) { return { title: '경쟁사 등장 ⚔️', text: '유사한 서비스를 제공하는 경쟁사가 등장했습니다. 피벗, 마케팅 강화로 대응 가능.',
-      apply: function(s) { s.business.competitor = true; s.business.growthPenalty = 0.7; } }; } },
-  bz_06: { trigger: function(s) { return s.business.active && s.business.mrr > 100; }, weight: 10,
-    flavor: function(s) { var add = Math.round(randomBetween(50, 200)); var u = Math.round(randomBetween(5, 20));
-      return { title: '기업 고객 대형 계약!', text: '대형 기업 고객과 계약 체결! [term:MRR] +' + formatYen(add) + ', 유료 +' + u + '명.',
-        apply: function(s) { s.business.mrr += add; s.business.users += u; } }; } },
-  bz_11: { trigger: function(s) { return s.business.active; }, weight: 8,
-    flavor: function(s) { var g = Math.round(randomBetween(100, 500));
-      return { title: '정부 DX 보조금', text: '일본 정부의 DX 지원금 ' + formatYen(g) + ' 수주.',
-        apply: function(s) { s.business.cash += g; } }; } },
-  lf_01: { trigger: function(s) { return true; }, weight: 5,
-    flavor: function(s) { var c = Math.round(randomBetween(50, 200));
-      return { title: '건강 이슈 🏥', text: '건강 검진 이상 소견. 의료비 ' + formatYen(c) + ' 발생.',
-        apply: function(s) { s.cash -= c; } }; } },
-  lf_03: { trigger: function(s) { return true; }, weight: 4,
-    flavor: function(s) { var a = Math.round(randomBetween(200, 1000));
-      return { title: '예상치 못한 상속 🎁', text: '상속으로 ' + formatYen(a) + ' 수령.',
-        apply: function(s) { s.cash += a; } }; } },
-  lf_05: { trigger: function(s) { return s.year >= 3; }, weight: 6,
-    flavor: function(s) { var i = Math.round(randomBetween(50, 300));
-      return { title: '강연/컨설팅 기회 🎤', text: '강연 및 컨설팅 부수입 ' + formatYen(i) + '.',
-        apply: function(s) { s.cash += i; } }; } },
-};
-
-function pickRandomEvent(category, state) {
-  var prefix = { re: 're_', sc: 'sc_', bz: 'bz_', pt: 'pt_', lf: 'lf_' }[category] || '';
-  var candidates = [];
-  var keys = Object.keys(EVENTS);
-  for (var i = 0; i < keys.length; i++) {
-    var k = keys[i];
-    if (k.startsWith(prefix) && EVENTS[k].trigger(state)) candidates.push(EVENTS[k]);
+// === LOCALSTORAGE SAVE/LOAD ===
+function saveGame() {
+  if (engine) {
+    try { localStorage.setItem('richman-save', engine.get_state_json()); } catch(e) {}
   }
-  if (candidates.length === 0) return null;
-  var tw = candidates.reduce(function(sum, e) { return sum + (e.weight || 10); }, 0);
-  var r = Math.random() * tw;
-  for (var j = 0; j < candidates.length; j++) { r -= (candidates[j].weight || 10); if (r <= 0) return candidates[j]; }
-  return candidates[0];
+}
+function loadGame() {
+  try { return JSON.parse(localStorage.getItem('richman-save')); } catch(e) { return null; }
+}
+function hasSave() {
+  return !!localStorage.getItem('richman-save');
+}
+function resumeGame() {
+  var data = localStorage.getItem('richman-save');
+  if (!data) return;
+  engine = new GameEngine(0, 10, '');
+  engine.load_state_json(data);
+  renderDecisionScreen();
+}
+function getLocalStats() {
+  try { return JSON.parse(localStorage.getItem('richman-stats')) || { games: 0, wins: 0 }; } catch(e) { return { games: 0, wins: 0 }; }
+}
+function saveLocalStats(won) {
+  var stats = getLocalStats();
+  stats.games++;
+  if (won) stats.wins++;
+  try { localStorage.setItem('richman-stats', JSON.stringify(stats)); } catch(e) {}
 }
 
-// === 6. DECISION GENERATOR ===
-function generateProperty() {
-  var area = TOKYO_AREAS[Math.floor(Math.random() * TOKYO_AREAS.length)];
-  var price = Math.round(randomBetween(area.basePrice[0], area.basePrice[1]) / 10) * 10;
-  var ltv = randomBetween(0.75, 0.85);
-  var loan = Math.round(price * ltv / 10) * 10;
-  var downPayment = price - loan;
-  var rr = randomBetween(area.rentRate[0], area.rentRate[1]);
-  var mr = Math.round(price * rr / 12 * 10) / 10;
-  var mf = mr * 0.15;
-  var mi = (loan * 0.0075) / 12;
-  var cf = Math.round((mr - mf - mi) * 10) / 10;
-  return { area: area.name, type: '1K', size: Math.round(randomBetween(22, 32)), purchasePrice: price, loan: loan, loanRate: 0.0075, rent: mr, monthlyCF: cf, downPayment: downPayment, propTechApplied: false, valueChange: 0, occupiedMonths: 12 };
+function renderLangButton() {
+  return '<button class="lang-btn" data-action="cycle-lang" title="' + getLangLabel() + '">' + t('ui.lang_button') + '</button>';
 }
 
-function getCashAllocationOptions(state) {
-  var opts = [];
-  if (state.cash >= 100) {
-    opts.push({ id: 'buy_stocks', icon: '📈', title: '주식/암호 매수', desc: '가용 현금에서 투자 (현재 ' + formatYen(state.cash) + ')', tag: '투자', priority: 40,
-      action: function(s) { var a = Math.min(s.cash * 0.5, s.cash - 50); var q = Math.round(a * 0.6); var c = Math.round(a * 0.4); s.stocks.qqq += q; s.stocks.qqqCost += q; s.stocks.crypto += c; s.stocks.cryptoCost += c; s.cash -= (q + c); } });
-  }
-  if (state.cash >= 200) {
-    opts.push({ id: 'save_cash', icon: '💰', title: '비상금 적립', desc: '현금 보유 (안전 우선)', tag: '저축', priority: 20,
-      action: function(s) { var a = Math.round(s.cash * 0.3); s.emergency += a; s.cash -= a; } });
-  }
-  return opts;
-}
-
-function getBusinessDecisions(state) {
-  var opts = []; var b = state.business;
-  if (b.active && b.mrr < 500) {
-    opts.push({ id: 'hire_marketer', icon: '📢', title: '마케팅 인력 채용', desc: '마케팅 강화 (연 400만엔, MRR 성장 ↑)', tag: '사업', priority: 60,
-      action: function(s) { s.business.employees += 1; s.business.cash -= 400; s.business.marketingBoost = true; } });
-    opts.push({ id: 'hire_engineer', icon: '👨‍💻', title: '엔지니어 채용', desc: '제품 개발 가속 (연 500만엔, 기능 ↑)', tag: '사업', priority: 55,
-      action: function(s) { s.business.employees += 1; s.business.cash -= 500; s.business.devBoost = true; } });
-  }
-  if (b.active && b.competitor) {
-    opts.push({ id: 'pivot', icon: '🔄', title: '피벗 (방향 전환)', desc: '다른 분야로 전환하여 경쟁 회피', tag: '사업', priority: 70,
-      action: function(s) { s.business.competitor = false; s.business.growthPenalty = 1.0; s.business.mrr = Math.round(s.business.mrr * 0.7); s.business.pivotDone = true; } });
-  }
-  return opts;
-}
-
-function getRealEstateDecisions(state) {
-  var opts = [];
-  if (state.cash >= 200) {
-    opts.push({ id: 'buy_re_1', icon: '🏢', title: '부동산 1동 매수', desc: '도쿄 도심 1K (약 2,000만엔, 대출 80%)', tag: '부동산', priority: 50,
-      action: function(s) { var p = generateProperty(); s.realEstate.push(p); s.cash -= p.downPayment; } });
-  }
-  if (state.cash >= 600 && state.realEstate.length >= 1) {
-    opts.push({ id: 'buy_re_3', icon: '🏢🏢🏢', title: '부동산 3동 매수', desc: '도쿄 도심 1K × 3동 일괄 매수', tag: '부동산', priority: 45,
-      action: function(s) { var td = 0; for (var i = 0; i < 3; i++) { var p = generateProperty(); s.realEstate.push(p); td += p.downPayment; } s.cash -= td; } });
-  }
-  if (state.realEstate.length >= 1 && state.year >= 2) {
-    opts.push({ id: 'refinance', icon: '🏦', title: '리파이낸스', desc: '기존 매물 대출 재구성 → [term:Equity] 회수', tag: '부동산', priority: 35,
-      action: function(s) { var f = 0; s.realEstate.forEach(function(p) { var nv = Math.round(p.purchasePrice * (1 + p.valueChange)); var nl = Math.round(nv * 0.80); f += Math.max(0, nl - p.loan); p.loan = nl; p.loanRate = Math.max(0.005, p.loanRate - 0.001); }); s.cash += f; } });
-  }
-  return opts;
-}
-
-function getVCOptions(state) {
-  return [
-    { id: 'series_a', icon: '💰', title: 'Series A 받기', desc: '1.5억엔 투자, 지분 25% 양보. 사업 가치 5억엔.', tag: '사업', priority: 65,
-      action: function(s) { s.seriesA = true; s.business.stake = 0.75; s.business.cash += 15000; } },
-    { id: 'bootstrap', icon: '🥾', title: '부트스트랩 유지', desc: 'VC 없이 자력 성장. 지분 유지.', tag: '사업', priority: 40,
-      action: function(s) { s.seriesA = 'declined'; } },
-  ];
-}
-
-function getExpansionOptions(state) {
-  return [
-    { id: 'expand_korea', icon: '🇰🇷', title: '한국 진출', desc: '한국 시장 진출 (비용 ' + formatYen(4000) + ')', tag: '사업', priority: 50,
-      action: function(s) { s.expandedTo = 'korea'; s.business.cash -= 4000; } },
-    { id: 'expand_taiwan', icon: '🇹🇼', title: '대만 진출', desc: '대만 시장 진출 (비용 ' + formatYen(3000) + ')', tag: '사업', priority: 48,
-      action: function(s) { s.expandedTo = 'taiwan'; s.business.cash -= 3000; } },
-    { id: 'hold_expansion', icon: '🏠', title: '일본 시장 수성', desc: '해외 진출 보류, 일본 내수 집중', tag: '사업', priority: 30,
-      action: function(s) { s.expandedTo = 'held'; } },
-  ];
-}
-
-function getExitOptions(state) {
-  var opts = [];
-  if (state.business.active && state.business.value > 0) {
-    opts.push({ id: 'exit_sell_all', icon: '🏦', title: '전액 현금화 ([term:Exit])', desc: '사업+부동산+투자 전부 매각 → 최종 자산 확정', tag: '엑시트', priority: 80,
-      action: function(s) { s.exited = true; s.gameOver = true; } });
-    opts.push({ id: 'exit_sell_biz', icon: '💼', title: '사업만 매각', desc: '사업 매각 (' + formatYen(state.business.value) + ' × 지분 ' + Math.round(state.business.stake * 100) + '%)', tag: '엑시트', priority: 70,
-      action: function(s) { var sv = Math.round(s.business.value * s.business.stake); var tx = Math.round(sv * 0.20); s.cash += (sv - tx); s.business.active = false; s.exited = true; } });
-  }
-  opts.push({ id: 'hold_to_end', icon: '⏳', title: '계속 진행', desc: '매각하지 않고 마지막까지 투자', tag: '유지', priority: 20,
-    action: function(s) {} });
-  return opts;
-}
-
-function getPropTechDecisions(state) {
-  var opts = [];
-  if (state.proptech.active) {
-    opts.push({ id: 'proptech_marketing', icon: '📢', title: '[term:PropTech] 마케팅 강화', desc: '유저 확보 가속 (200만엔 비용)', tag: '신규 사업', priority: 45,
-      action: function(s) { s.cash -= 200; s.proptech.marketingBoost = true; } });
-    if (state.realEstate.length >= 1) {
-      opts.push({ id: 'proptech_apply_all', icon: '🏗️', title: 'PropTech 전 매물 적용', desc: '보유 부동산 전체에 서비스 적용 → 가치 향상', tag: '신규 사업', priority: 40,
-        action: function(s) { s.realEstate.forEach(function(p) { p.propTechApplied = true; }); } });
-    }
-  }
-  return opts;
-}
-
-function getLifeEvent(state) {
-  var events = [
-    { id: 'life_health', icon: '🏥', title: '건강 이슈 발생', desc: '의료비 50~200만엔 지출', tag: '라이프', priority: 90,
-      action: function(s) { var c = Math.round(randomBetween(50, 200)); s.cash -= c; } },
-    { id: 'life_inheritance', icon: '🎁', title: '예상치 못한 상속', desc: '현금 200~1,000만엔 유입', tag: '라이프', priority: 85,
-      action: function(s) { s.cash += Math.round(randomBetween(200, 1000)); } },
-    { id: 'life_speaking', icon: '🎤', title: '강연/컨설팅 기회', desc: '부수입 50~300만엔', tag: '라이프', priority: 60,
-      action: function(s) { s.cash += Math.round(randomBetween(50, 300)); } },
-  ];
-  return [events[Math.floor(Math.random() * events.length)]];
-}
-
-function getDecisions(state) {
-  var options = []; var year = state.year;
-  if (year === 1 && !state.business.active) {
-    options.push({ id: 'start_business', icon: '💼', title: '창업 시작', desc: 'AI 에이전트 SaaS MVP 개발 (100만엔~)', tag: '사업', priority: state.strategy === 'business' ? 100 : 50,
-      action: function(s) { s.business.active = true; s.business.mrr = 0; s.business.users = 0; s.cash -= 100; } });
-  }
-  options = options.concat(getCashAllocationOptions(state));
-  if (state.business.active) options = options.concat(getBusinessDecisions(state));
-  if (state.cash >= 200) options = options.concat(getRealEstateDecisions(state));
-  if (state.business.mrr >= 100 && !state.seriesA) options = options.concat(getVCOptions(state));
-  if (state.business.mrr >= 200 && !state.expandedTo) options = options.concat(getExpansionOptions(state));
-  if (state.business.value >= 20000 || year >= state.duration - 1) options = options.concat(getExitOptions(state));
-  if (state.proptech.active) options = options.concat(getPropTechDecisions(state));
-  if (!state.proptech.active && state.business.active && state.realEstate.length >= 1) {
-    options.push({ id: 'start_proptech', icon: '🏗️', title: '[term:PropTech] 창업', desc: '부동산 가치 향상 서비스 시작 (200만엔)', tag: '신규 사업', priority: 30,
-      action: function(s) { s.proptech.active = true; s.proptech.mrr = 0; s.proptech.users = 0; s.cash -= 200; } });
-  }
-  if (Math.random() < 0.30) options = options.concat(getLifeEvent(state));
-  if (year <= 3 && state.strategy) {
-    options.forEach(function(opt) {
-      if (state.strategy === 'realestate' && opt.tag === '부동산') opt.priority += 1;
-      if (state.strategy === 'stocks' && opt.tag === '투자') opt.priority += 1;
-      if (state.strategy === 'business' && opt.tag === '사업') opt.priority += 1;
-    });
-  }
-  return options.sort(function(a, b) { return b.priority - a.priority; }).slice(0, 4);
-}
-
-// === 7. YEAR PROCESSING ENGINE ===
-function calcMacro(state) {
-  var roll = rollD20(); var bonus = 0, label = '안정', affects = 'all';
-  if (roll >= 17) { bonus = 3; label = 'AI 붐 가속 🤖'; affects = 'business'; }
-  else if (roll >= 13) { bonus = 2; label = '시장 호황 📈'; }
-  else if (roll >= 8) { bonus = 0; label = '안정'; }
-  else if (roll >= 4) { bonus = -2; label = '경제 둔화 😓'; }
-  else { bonus = -3; label = '금융 위기 😱'; }
-  var rr = rollD20(); if (rr >= 17) { bonus += 2; label += ' + 부동산 버블 🏢'; }
-  return { bonus: bonus, label: label, affects: affects };
-}
-
-function calcRealEstate(state, roll, marketBonus) {
-  var outcome = rollOutcome(roll, marketBonus); var events = [];
-  state.realEstate.forEach(function(prop, i) {
-    var mc = randomBetween(-0.03, 0.10) * outcome.multiplier;
-    var pc = mc + (prop.propTechApplied ? state.proptech.propertyBoost : 0);
-    prop.valueChange += pc;
-    if (outcome.tier === 'critical') prop.occupiedMonths = Math.max(6, prop.occupiedMonths - 3);
-    else if (outcome.tier === 'poor') prop.occupiedMonths = Math.max(8, prop.occupiedMonths - 2);
-    else if (outcome.tier === 'moderate') prop.occupiedMonths = Math.max(10, prop.occupiedMonths - 1);
-    else prop.occupiedMonths = 12;
-    var cf = prop.monthlyCF * prop.occupiedMonths; state.cash += cf;
-    events.push({ area: 'real_estate', emoji: '🏢', roll: outcome.effectiveRoll, tier: outcome.tier, label: outcome.label,
-      title: prop.area + ' ' + prop.type, text: '자산가치 ' + formatPercent(pc) + '. ' + (prop.occupiedMonths < 12 ? (12 - prop.occupiedMonths) + '개월 공실. ' : '') + '연 CF +' + formatYen(cf) });
-  });
-  return events;
-}
-
-function calcStocks(state, roll, marketBonus) {
-  var outcome = rollOutcome(roll, marketBonus); var events = [];
-  if (state.stocks.qqq > 0) {
-    var qr = randomBetween(-0.20, 0.35) * outcome.multiplier;
-    state.stocks.qqq = Math.round(state.stocks.qqq * (1 + qr));
-    events.push({ area: 'stocks', emoji: '📊', roll: outcome.effectiveRoll, tier: outcome.tier, label: outcome.label,
-      title: 'QQQ (나스닥)', text: 'QQQ ' + formatPercent(qr) + ' → ' + formatYen(state.stocks.qqq) });
-  }
-  if (state.stocks.crypto > 0) {
-    var cb = randomBetween(-0.60, 2.00);
-    var cr = cb * outcome.multiplier + (marketBonus * 0.1);
-    state.stocks.crypto = Math.max(0, Math.round(state.stocks.crypto * (1 + cr)));
-    events.push({ area: 'crypto', emoji: '💎', roll: outcome.effectiveRoll, tier: outcome.tier, label: outcome.label,
-      title: '암호자산', text: '암호 ' + formatPercent(cr) + ' → ' + formatYen(state.stocks.crypto) });
-  }
-  return events;
-}
-
-function calcBusiness(state, roll, marketBonus) {
-  var outcome = rollOutcome(roll, marketBonus); var b = state.business; var events = [];
-  if (!b.active) return events;
-  var bg = randomBetween(0.10, 0.30) * outcome.multiplier;
-  var eg = bg * b.growthPenalty;
-  var mm = b.marketingBoost ? 1.5 : 1.0;
-  var dm = b.devBoost ? 1.3 : 1.0;
-  // If 0 users, seed with initial users based on roll (2-20)
-  if (b.users === 0) {
-    var seedUsers = Math.max(1, Math.round(outcome.multiplier * (outcome.tier === 'great' ? 15 : outcome.tier === 'good' ? 8 : 3)));
-    b.users = seedUsers;
-    b.mrr = seedUsers * 2; // 2万/user initial
-    var nu = seedUsers;
-  } else {
-    var nu = Math.round(b.users * eg * mm); b.users += nu;
-  }
-  var ar = b.users > 0 ? b.mrr / Math.max(1, b.users - nu) : 2;
-  b.mrr += Math.round(nu * ar * dm);
-  var mp = 4;
-  if (outcome.tier === 'great') mp = 8; else if (outcome.tier === 'good') mp = 6;
-  else if (outcome.tier === 'moderate') mp = 4; else mp = 3;
-  if (state.seriesA) mp += 2; if (state.expandedTo) mp += 1;
-  b.value = Math.round(b.mrr * 12 * mp);
-  var sc = b.employees * 400; var ic = 200 + b.users * 0.5; var mc = b.marketingBoost ? 300 : 0;
-  var tc = sc + ic + mc; var rev = b.mrr * 12; var net = rev - tc; b.cash += net;
-  events.push({ area: 'business', emoji: '💼', roll: outcome.effectiveRoll, tier: outcome.tier, label: outcome.label,
-    title: 'SaaS 사업', text: '유료 ' + b.users + '명 (+' + nu + '). [term:MRR] ' + formatYen(b.mrr) + '/월. 사업가치 ' + formatYen(b.value) + '. ' + (net >= 0 ? '흑자 +' + formatYen(net) : '적자 ' + formatYen(net)) });
-  if (Math.random() < 0.25) {
-    var ev = pickRandomEvent('bz', state);
-    if (ev) { var r = ev.flavor(state); r.apply(state); events.push({ area: 'business_event', emoji: '⚡', title: r.title, text: r.text }); }
-  }
-  return events;
-}
-
-function calcPropTech(state, roll, marketBonus) {
-  var outcome = rollOutcome(roll, marketBonus); var p = state.proptech; var events = [];
-  if (!p.active) return events;
-  var g = randomBetween(0.15, 0.40) * outcome.multiplier;
-  var nu = Math.round(p.users * g); p.users += nu; var ar = 5; p.mrr += nu * ar;
-  p.propertyBoost = Math.min(0.25, p.propertyBoost + randomBetween(0.01, 0.05) * outcome.multiplier);
-  state.realEstate.forEach(function(prop) { prop.propTechApplied = true; });
-  p.value = Math.round(p.mrr * 12 * 3);
-  events.push({ area: 'proptech', emoji: '🏗️', roll: outcome.effectiveRoll, tier: outcome.tier, label: outcome.label,
-    title: '[term:PropTech]', text: '유저 ' + p.users + '명 (+' + nu + '). [term:MRR] ' + formatYen(p.mrr) + '/월. 매물 가치 +' + formatPercent(p.propertyBoost) });
-  return events;
-}
-
-function calcTotalAssets(state) {
-  var reEq = state.realEstate.reduce(function(sum, p) { return sum + (Math.round(p.purchasePrice * (1 + p.valueChange)) - p.loan); }, 0);
-  var reCF = state.realEstate.reduce(function(sum, p) { return sum + p.monthlyCF * p.occupiedMonths; }, 0);
-  var st = state.stocks.qqq + state.stocks.crypto;
-  var bv = Math.round(state.business.value * state.business.stake);
-  var bc = state.business.cash > 0 ? Math.round(state.business.cash * state.business.stake) : 0;
-  var pv = state.proptech.value;
-  return Math.round(reEq + reCF + st + bv + bc + pv + state.cash + state.emergency);
-}
-
-function processYear(state, decision) {
-  decision.action(state);
-  var macro = calcMacro(state);
-  var events = [];
-  var allEvents = [];
-  if (state.realEstate.length > 0) { var reEv = calcRealEstate(state, rollD20(), macro.bonus); events = events.concat(reEv); }
-  if (state.stocks.qqq > 0 || state.stocks.crypto > 0) { var stEv = calcStocks(state, rollD20(), macro.bonus); events = events.concat(stEv); }
-  if (state.business.active) { var bzEv = calcBusiness(state, rollD20(), macro.bonus); events = events.concat(bzEv); }
-  if (state.proptech.active) { var ptEv = calcPropTech(state, rollD20(), macro.bonus); events = events.concat(ptEv); }
-  if (Math.random() < 0.30) { var le = pickRandomEvent('lf', state); if (le) { var lr = le.flavor(state); lr.apply(state); events.push({ area: 'life_event', emoji: '🎲', title: lr.title, text: lr.text }); } }
-  var total = calcTotalAssets(state);
-  var earlyEnd = null;
-  if (total >= state.goal) earlyEnd = 'goal';
-  else if (total <= 0 && state.cash < 0 && state.realEstate.length === 0 && state.stocks.qqq + state.stocks.crypto === 0 && (!state.business.active || state.business.value === 0) && state.emergency === 0) earlyEnd = 'bankruptcy';
-  state.history.push({ year: state.year, totalAssets: total });
-  return { events: events, macro: macro, total: total, earlyEnd: earlyEnd };
-}
-
-// === 9. TAX & EXIT CALCULATOR ===
-function processExit(state) {
-  var breakdown = {};
-  // Business sale
-  if (state.business.active && state.business.value > 0) {
-    var sv = Math.round(state.business.value * state.business.stake);
-    var bt = Math.round(sv * 0.20);
-    breakdown.business = sv - bt;
-  }
-  // Real estate
-  var reTotal = 0;
-  state.realEstate.forEach(function(p) {
-    var cv = Math.round(p.purchasePrice * (1 + p.valueChange));
-    var gain = Math.max(0, cv - p.purchasePrice);
-    var tx = Math.round(gain * 0.15);
-    reTotal += (cv - p.loan - tx);
-  });
-  breakdown.realEstate = reTotal;
-  // Stocks
-  var qGain = Math.max(0, state.stocks.qqq - state.stocks.qqqCost);
-  var qTx = Math.round(qGain * 0.20315);
-  breakdown.qqq = state.stocks.qqq - qTx;
-  var cGain = Math.max(0, state.stocks.crypto - state.stocks.cryptoCost);
-  var cTx = Math.round(cGain * 0.20315);
-  breakdown.crypto = state.stocks.crypto - cTx;
-  // Cash + emergency (no tax)
-  breakdown.cash = state.cash + state.emergency;
-  // Business cash (dividend 20%)
-  if (state.business.cash > 0) {
-    var dct = Math.round(state.business.cash * 0.20);
-    breakdown.businessCash = state.business.cash - dct;
-  } else breakdown.businessCash = 0;
-  // PropTech
-  if (state.proptech.active && state.proptech.value > 0) {
-    var ptv = state.proptech.value; var ptt = Math.round(ptv * 0.20);
-    breakdown.proptech = ptv - ptt;
-  } else breakdown.proptech = 0;
-  var total = 0;
-  var keys = Object.keys(breakdown);
-  for (var i = 0; i < keys.length; i++) total += breakdown[keys[i]];
-  return { breakdown: breakdown, totalAfterTax: Math.round(total) };
-}
-
-function getRank(total) {
-  if (total >= 200000) return { emoji: '🥇', name: 'Gold', desc: '20億円 達成! 꿈을 이뤘습니다!' };
-  if (total >= 100000) return { emoji: '🥈', name: 'Silver', desc: '10億円 달성! 절반 이상!' };
-  if (total >= 50000) return { emoji: '🥉', name: 'Bronze', desc: '5億円 달성!' };
-  if (total >= 10000) return { emoji: '🏅', name: 'Iron', desc: '1億円 달성!' };
-  return { emoji: '💧', name: 'Participation', desc: '처음부터 다시!' };
-}
-
-function generateShareText(state, finalTotal) {
-  var gm = state.startCapital > 0 ? (finalTotal / state.startCapital).toFixed(1) : '∞';
-  var rank = getRank(finalTotal);
-  var sn = { realestate: '부동산 올인', stocks: '주식/암호 올인', business: '창업 올인', '': '복합 전략' };
-  return formatYen(state.startCapital) + '에서 ' + formatYen(finalTotal) + '까지 ' + state.duration + '년간 ' + gm + '배 성장!\n전략: ' + (sn[state.strategy] || '복합 전략') + '\n랭크: ' + rank.emoji + ' ' + rank.name + '\n#20億円の夢';
-}
-
-// === 10. UI RENDER FUNCTIONS ===
-var app = document.getElementById('app');
-var setupStep = 0;
-var currentDecisions = [];
-
+// === SCREEN: TITLE ===
 function renderTitle() {
   var stats = getLocalStats();
   var html = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px;text-align:center">';
-  html += '<div style="font-size:2.5rem;font-weight:800;color:var(--gold);margin-bottom:8px">20億円の夢</div>';
-  html += '<div style="font-size:1rem;color:var(--text-dim);margin-bottom:32px">Rich Man Simulator</div>';
-  html += '<div class="backstory">"이 게임은 한 사람의 꿈에서 시작되었습니다.<br>20억엔을 모으고 싶었던 개발자의 이야기."</div>';
-  html += '<button class="btn btn-primary" style="margin-bottom:12px" data-action="start">게임 시작</button>';
-  if (hasSave()) html += '<button class="btn" style="margin-bottom:12px" data-action="resume">이어하기</button>';
-  html += '<button class="btn" data-action="glossary">📖 용어 사전</button>';
-  if (stats.games > 0) html += '<div style="margin-top:24px;font-size:.8rem;color:var(--text-faint)">📊 지금까지 ' + stats.games + '회 도전, ' + Math.round(stats.wins / stats.games * 100) + '% 달성!</div>';
+  html += renderLangButton();
+  html += '<div style="font-size:2.5rem;font-weight:800;color:var(--gold);margin-bottom:8px">' + t("ui.title") + '</div>';
+  html += '<div style="font-size:1rem;color:var(--text-dim);margin-bottom:32px">' + t("ui.subtitle") + '</div>';
+  html += '<div class="backstory">' + t("ui.backstory") + '</div>';
+  html += '<button class="btn btn-primary" style="margin-bottom:12px" data-action="start">' + t("ui.start") + '</button>';
+  if (hasSave()) html += '<button class="btn" style="margin-bottom:12px" data-action="resume">' + t("ui.resume") + '</button>';
+  html += '<button class="btn" data-action="glossary">' + t("ui.glossary") + '</button>';
+  if (stats.games > 0) html += '<div style="margin-top:24px;font-size:.8rem;color:var(--text-faint)">📊 ' + stats.games + ' ' + t("ui.stats_games") + ', ' + Math.round(stats.wins / stats.games * 100) + '% ' + t("ui.stats_wins") + '</div>';
   html += '</div>';
   app.innerHTML = html;
 }
 
+// === SCREEN: SETUP ===
 function renderSetup(step) {
   var html = '<div style="padding:24px;min-height:100vh;display:flex;flex-direction:column;justify-content:center">';
-  html += '<div style="font-size:.85rem;color:var(--text-dim);margin-bottom:8px">설정 ' + (step + 1) + '/3</div>';
+  html += renderLangButton();
+  html += '<div style="font-size:.85rem;color:var(--text-dim);margin-bottom:8px">' + t("ui.setup_step") + ' ' + (step + 1) + '/3</div>';
   if (step === 0) {
-    html += '<div style="font-size:1.2rem;font-weight:600;margin-bottom:24px">시작 자본을 입력하세요</div>';
+    html += '<div style="font-size:1.2rem;font-weight:600;margin-bottom:24px">' + t("ui.setup_capital") + '</div>';
     html += '<input type="number" class="setup-input" id="capital-input" placeholder="100" min="100" max="100000" inputmode="numeric">';
-    html += '<div style="font-size:.85rem;color:var(--text-dim);margin-top:8px">만엔 단위 (100~100,000)</div>';
+    html += '<div style="font-size:.85rem;color:var(--text-dim);margin-top:8px">' + t("ui.capital_unit") + '</div>';
     html += '<div class="quick-select">';
     html += '<button class="quick-btn" data-action="quick-capital" data-value="500">500万</button>';
     html += '<button class="quick-btn" data-action="quick-capital" data-value="1000">1,000万</button>';
     html += '<button class="quick-btn" data-action="quick-capital" data-value="5000">5,000万</button>';
     html += '<button class="quick-btn" data-action="quick-capital" data-value="10000">1億</button>';
     html += '</div>';
-    html += '<div class="setup-info">🎯 목표: 20億円 (고정)</div>';
-    html += '<button class="btn btn-primary" style="margin-top:24px" data-action="next-capital">다음 →</button>';
+    html += '<div class="setup-info">' + t("ui.goal") + '</div>';
+    html += '<button class="btn btn-primary" style="margin-top:24px" data-action="next-capital">' + t("ui.next") + '</button>';
   } else if (step === 1) {
-    html += '<div style="font-size:1.2rem;font-weight:600;margin-bottom:24px">목표 기간을 선택하세요</div>';
-    var durations = [{ v: 5, l: '5년 (초고속)' }, { v: 10, l: '10년 (표준)' }, { v: 15, l: '15년 (장기)' }, { v: 20, l: '20년 (마라톤)' }];
+    html += '<div style="font-size:1.2rem;font-weight:600;margin-bottom:24px">' + t("ui.setup_duration") + '</div>';
+    var durations = [{ v: 5, l: t("duration.5") }, { v: 10, l: t("duration.10") }, { v: 15, l: t("duration.15") }, { v: 20, l: t("duration.20") }];
     durations.forEach(function(d) {
       html += '<button class="btn-decision" style="margin-bottom:8px" data-action="select-duration" data-value="' + d.v + '"><div class="title">' + d.l + '</div></button>';
     });
   } else if (step === 2) {
-    html += '<div style="font-size:1.2rem;font-weight:600;margin-bottom:24px">선호하는 전략을 선택하세요</div>';
+    html += '<div style="font-size:1.2rem;font-weight:600;margin-bottom:24px">' + t("ui.setup_strategy") + '</div>';
     var strategies = [
-      { v: 'realestate', icon: '🏢', t: '부동산 투자', d: '레버리지 중심, 안정적 자산 구축' },
-      { v: 'stocks', icon: '📈', t: '주식·암호자산', d: '시장 투자 중심, 변동성 높음' },
-      { v: 'business', icon: '💼', t: '창업·비즈니스', d: '사업 중심, 최대 승수 가능' },
-      { v: '', icon: '⚖️', t: '복합 전략', d: '여러 분야 조합, 밸런스' },
+      { v: 'realestate', icon: '🏢', t: t("strategy.realestate"), d: t("strategy.realestate.desc") },
+      { v: 'stocks', icon: '📈', t: t("strategy.stocks"), d: t("strategy.stocks.desc") },
+      { v: 'business', icon: '💼', t: t("strategy.business"), d: t("strategy.business.desc") },
+      { v: '', icon: '⚖️', t: t("strategy.mixed"), d: t("strategy.mixed.desc") },
     ];
     strategies.forEach(function(s) {
       html += '<button class="btn-decision" style="margin-bottom:8px" data-action="select-strategy" data-value="' + s.v + '"><div class="title">' + s.icon + ' ' + s.t + '</div><div class="desc">' + s.d + '</div></button>';
@@ -683,35 +1058,46 @@ function renderSetup(step) {
   app.innerHTML = html;
 }
 
+// === SCREEN: DECISION ===
 function renderDecisionScreen() {
-  currentDecisions = getDecisions(game);
-  var total = calcTotalAssets(game);
-  var pct = Math.min(100, Math.round(total / game.goal * 1000) / 10);
-  var html = '<div class="header-sticky"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-weight:600">Year ' + game.year + '/' + game.duration + '</span><span style="color:var(--gold);font-weight:600">💰 ' + formatYen(total) + '</span></div><div class="progress-bar"><div class="progress-fill" style="width:' + pct + '%"></div></div><div style="font-size:.75rem;color:var(--text-dim);margin-top:4px">' + pct + '% → 목표 ' + formatYen(game.goal) + '</div></div>';
+  currentDecisions = JSON.parse(engine.get_decisions());
+  var total = engine.total_assets();
+  var pct = Math.min(100, Math.round(total / 200000 * 1000) / 10);
+  var state = JSON.parse(engine.get_state_json());
+  var html = '<div class="header-sticky"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-weight:600">' + t("ui.year") + ' ' + state.year + '/' + state.duration + '</span><span style="color:var(--gold);font-weight:600">💰 ' + formatYen(total) + '</span></div><div class="progress-bar"><div class="progress-fill" style="width:' + pct + '%"></div></div><div style="font-size:.75rem;color:var(--text-dim);margin-top:4px">' + pct + t("ui.goal_progress") + '</div></div>';
+  html += renderLangButton();
   html += '<div style="padding:16px;padding-bottom:80px">';
-  html += '<div style="font-size:.9rem;color:var(--text-dim);margin-bottom:16px">어떻게 하시겠습니까?</div>';
+  html += '<div style="font-size:.9rem;color:var(--text-dim);margin-bottom:16px">' + t("ui.decision_prompt") + '</div>';
   currentDecisions.forEach(function(opt) {
-    html += '<button class="btn-decision" style="margin-bottom:10px" data-action="decision" data-id="' + opt.id + '"><div class="title">' + opt.icon + ' ' + processEventText(opt.title) + '</div><div class="desc">' + processEventText(opt.desc) + '</div><span class="tag">' + opt.tag + '</span></button>';
+    var icon = categoryIcon(opt.category);
+    html += '<button class="btn-decision" style="margin-bottom:10px" data-action="decision" data-id="' + opt.id + '"><div class="title">' + icon + ' ' + processEventText(t(opt.label)) + '</div><div class="desc">' + processEventText(t(opt.description)) + '</div><span class="tag">' + opt.category + '</span></button>';
   });
   html += '</div>';
   html += '<button class="float-btn" data-action="glossary">📖</button>';
   app.innerHTML = html;
 }
 
+function categoryIcon(cat) {
+  var icons = { business: '💼', stocks: '📈', cash: '💰', realestate: '🏢', vc: '💰', expansion: '🌍', proptech: '🏗️', exit: '🏦', life: '🎲' };
+  return icons[cat] || '▶️';
+}
+
+// === DICE ANIMATION ===
 function animateDiceRoll(callback) {
+  var state = JSON.parse(engine.get_state_json());
   var areas = [];
-  if (game.realEstate.length > 0) areas.push({ emoji: '🏢', name: '부동산' });
-  if (game.stocks.qqq > 0 || game.stocks.crypto > 0) areas.push({ emoji: '📈', name: '투자' });
-  if (game.business.active) areas.push({ emoji: '💼', name: '사업' });
-  if (game.proptech.active) areas.push({ emoji: '🏗️', name: 'PropTech' });
-  if (areas.length === 0) areas.push({ emoji: '🎲', name: '운명' });
+  if (state.realEstate.length > 0) areas.push({ emoji: '🏢', name: t("ui.dice_area_re") });
+  if (state.stocks.qqq > 0 || state.stocks.crypto > 0) areas.push({ emoji: '📈', name: t("ui.dice_area_stocks") });
+  if (state.business.active) areas.push({ emoji: '💼', name: t("ui.dice_area_biz") });
+  if (state.proptech.active) areas.push({ emoji: '🏗️', name: t("ui.propTech") });
+  if (areas.length === 0) areas.push({ emoji: '🎲', name: t("ui.dice_area_fate") });
   var overlay = document.createElement('div');
   overlay.className = 'dice-overlay';
   var html = '<button class="dice-skip" data-action="skip-dice">⏭️</button>';
   html += '<div style="font-size:3rem;display:flex;gap:16px">';
   areas.forEach(function(a) { html += '<span class="dice-rolling">' + a.emoji + '</span>'; });
   html += '</div>';
-  html += '<div style="color:var(--text-dim);font-size:.9rem">운명이 정해지고 있습니다...</div>';
+  html += '<div style="color:var(--text-dim);font-size:.9rem">' + t("ui.dice_rolling") + '</div>';
   overlay.innerHTML = html;
   document.body.appendChild(overlay);
   var skipped = false;
@@ -722,137 +1108,165 @@ function animateDiceRoll(callback) {
   }, skipped ? 100 : 1500);
 }
 
+// === SCREEN: YEAR RESULTS ===
 function renderYearResults(result) {
-  var total = result.total;
-  var pct = Math.min(100, Math.round(total / game.goal * 1000) / 10);
-  var html = '<div class="header-sticky"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-weight:600">Year ' + game.year + '/' + game.duration + ' 결과</span><span style="color:var(--gold);font-weight:600">💰 ' + formatYen(total) + '</span></div><div class="progress-bar"><div class="progress-fill" style="width:' + pct + '%"></div></div><div style="font-size:.75rem;color:var(--text-dim);margin-top:4px">' + pct + '% → 목표 ' + formatYen(game.goal) + '</div></div>';
+  var total = result.totalAssets;
+  var pct = Math.min(100, Math.round(total / 200000 * 1000) / 10);
+  var state = JSON.parse(engine.get_state_json());
+  var html = '<div class="header-sticky"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-weight:600">' + t("ui.year") + ' ' + result.year + '/' + state.duration + t("ui.result_suffix") + '</span><span style="color:var(--gold);font-weight:600">💰 ' + formatYen(total) + '</span></div><div class="progress-bar"><div class="progress-fill" style="width:' + pct + '%"></div></div><div style="font-size:.75rem;color:var(--text-dim);margin-top:4px">' + pct + t("ui.goal_progress") + '</div></div>';
+  html += renderLangButton();
   html += '<div style="padding:16px;padding-bottom:80px">';
   // Macro label
-  html += '<div class="card" style="text-align:center"><span style="font-size:.85rem;color:var(--text-dim)">🌐 시장: ' + result.macro.label + '</span></div>';
-  // Collapsible: events (expanded)
-  html += '<div class="card"><div class="collapse-header" data-action="toggle-collapse" data-target="events"><span style="font-weight:600">📊 이번 년 결과</span><span class="collapse-arrow open">▼</span></div><div class="collapse-content open" id="events">';
-  result.events.forEach(function(ev) {
-    var diceClass = 'dice-' + (ev.tier || 'moderate');
-    html += '<div class="event-card"><div class="header"><span class="left">' + ev.emoji + ' ' + processEventText(ev.title) + '</span>';
-    if (ev.roll) html += '<span class="dice-badge ' + diceClass + '">🎲' + ev.roll + ' ' + ev.label + '</span>';
-    else html += '<span class="dice-badge dice-moderate">⚡이벤트</span>';
-    html += '</div><div class="text">' + processEventText(ev.text) + '</div></div>';
-  });
-  if (result.events.length === 0) html += '<div style="color:var(--text-dim);padding:12px 0;text-align:center">변동 없음</div>';
+  var macro = result.macroResult;
+  var macroLabel = macro ? t(macro.outcomeLabel) : t("ui.no_change");
+  html += '<div class="card" style="text-align:center"><span style="font-size:.85rem;color:var(--text-dim)">' + t("ui.market") + ': ' + macroLabel + '</span></div>';
+  // Events
+  html += '<div class="card"><div class="collapse-header" data-action="toggle-collapse" data-target="events"><span style="font-weight:600">' + t("ui.year_result") + '</span><span class="collapse-arrow open">▼</span></div><div class="collapse-content open" id="events">';
+  if (result.events && result.events.length > 0) {
+    result.events.forEach(function(ev) {
+      var diceClass = 'dice-' + (ev.category === 'business' ? 'good' : 'moderate');
+      var flavorText = translateEventFlavor(ev.flavor);
+      html += '<div class="event-card"><div class="header"><span class="left">⚡ ' + processEventText(flavorText) + '</span><span class="dice-badge ' + diceClass + '">' + ev.category + '</span></div>';
+      if (ev.logs && ev.logs.length > 0) {
+        var translatedLogs = translateEventLogs(ev.logs);
+        translatedLogs.forEach(function(log) { html += '<div class="text">' + processEventText(log) + '</div>'; });
+      }
+      html += '</div>';
+    });
+  } else {
+    // Use log entries as events
+    if (result.log && result.log.length > 0) {
+      result.log.forEach(function(logEntry) {
+        html += '<div class="event-card"><div class="header"><span class="left">📊 ' + processEventText(translateLogItem(logEntry)) + '</span></div></div>';
+      });
+    } else {
+      html += '<div style="color:var(--text-dim);padding:12px 0;text-align:center">' + t("ui.no_change") + '</div>';
+    }
+  }
   html += '</div></div>';
-  // Collapsible: balance sheet
-  var reEq = game.realEstate.reduce(function(s, p) { return s + (Math.round(p.purchasePrice * (1 + p.valueChange)) - p.loan); }, 0);
-  var st = game.stocks.qqq + game.stocks.crypto;
-  var bv = Math.round(game.business.value * game.business.stake);
-  html += '<div class="card"><div class="collapse-header" data-action="toggle-collapse" data-target="balance"><span style="font-weight:600">📋 대차대조표</span><span class="collapse-arrow">▼</span></div><div class="collapse-content" id="balance">';
+  // Balance sheet
+  html += '<div class="card"><div class="collapse-header" data-action="toggle-collapse" data-target="balance"><span style="font-weight:600">' + t("ui.balance_sheet") + '</span><span class="collapse-arrow">▼</span></div><div class="collapse-content" id="balance">';
   html += '<div class="balance-sheet">';
-  if (reEq > 0) html += '<span class="label">🏢 부동산</span><span class="value">' + formatYen(reEq) + '</span>';
-  if (st > 0) html += '<span class="label">📈 주식/암호</span><span class="value">' + formatYen(st) + '</span>';
-  if (bv > 0) html += '<span class="label">💼 사업</span><span class="value">' + formatYen(bv) + '</span>';
-  if (game.proptech.value > 0) html += '<span class="label">🏗️ PropTech</span><span class="value">' + formatYen(game.proptech.value) + '</span>';
-  html += '<span class="label">💰 비상금</span><span class="value">' + formatYen(game.emergency) + '</span>';
-  html += '<span class="label">💵 현금</span><span class="value">' + formatYen(game.cash) + '</span>';
-  html += '<div class="total"><span class="label">합계</span><span class="value">' + formatYen(total) + '</span></div>';
+  if (result.realEstateValue > 0) html += '<span class="label">🏢 ' + t("ui.realestate") + '</span><span class="value">' + formatYen(result.realEstateValue) + '</span>';
+  if (result.stocksValue > 0) html += '<span class="label">📈 ' + t("ui.stocks") + '</span><span class="value">' + formatYen(result.stocksValue) + '</span>';
+  if (result.businessValue > 0) html += '<span class="label">💼 ' + t("ui.business") + '</span><span class="value">' + formatYen(result.businessValue) + '</span>';
+  if (result.proptechValue > 0) html += '<span class="label">🏗️ ' + t("ui.propTech") + '</span><span class="value">' + formatYen(result.proptechValue) + '</span>';
+  html += '<span class="label">💵 ' + t("ui.cash") + '</span><span class="value">' + formatYen(result.cash) + '</span>';
+  html += '<div class="total"><span class="label">' + t("ui.total") + '</span><span class="value">' + formatYen(total) + '</span></div>';
   html += '</div></div></div>';
-  // Collapsible: chart
-  if (game.history.length > 0) {
-    html += '<div class="card"><div class="collapse-header" data-action="toggle-collapse" data-target="chart"><span style="font-weight:600">📈 연도별 추이</span><span class="collapse-arrow">▼</span></div><div class="collapse-content" id="chart">';
-    var maxVal = Math.max.apply(null, game.history.map(function(h) { return h.totalAssets; }));
+  // Chart
+  if (state.history && state.history.length > 0) {
+    html += '<div class="card"><div class="collapse-header" data-action="toggle-collapse" data-target="chart"><span style="font-weight:600">' + t("ui.chart") + '</span><span class="collapse-arrow">▼</span></div><div class="collapse-content" id="chart">';
+    var maxVal = Math.max.apply(null, state.history.map(function(h) { return h.totalAssets; }));
     if (maxVal === 0) maxVal = 1;
     html += '<div class="chart">';
-    for (var i = 0; i < game.history.length; i++) {
-      var h = game.history[i];
+    for (var i = 0; i < state.history.length; i++) {
+      var h = state.history[i];
       var hgt = Math.max(4, Math.round(h.totalAssets / maxVal * 80));
-      var isCurrent = (i === game.history.length - 1);
+      var isCurrent = (i === state.history.length - 1);
       html += '<div class="chart-bar' + (isCurrent ? ' current' : '') + '" style="height:' + hgt + 'px" title="Y' + h.year + ': ' + formatYen(h.totalAssets) + '"></div>';
     }
     html += '</div></div></div>';
   }
-  // Footer button
-  var isLast = game.year >= game.duration;
-  var btnLabel = isLast ? '결과 보기 →' : '다음 해 →';
+  // Footer
+  var isLast = state.year >= state.duration;
+  var btnLabel = isLast || result.gameOver ? t("ui.view_result") : t("ui.next_year");
   html += '<div class="footer-sticky"><button class="btn btn-primary" data-action="next-year">' + btnLabel + '</button></div>';
-  // Floating glossary
   html += '<button class="float-btn" data-action="glossary">📖</button>';
-  // Early end check
-  if (result.earlyEnd === 'goal') {
-    html += '<div class="tooltip-overlay" id="goal-overlay"><div class="tooltip-card" style="text-align:center"><div style="font-size:2rem;margin-bottom:12px">🏆</div><div style="font-size:1.2rem;font-weight:700;color:var(--gold);margin-bottom:8px">20억엔 달성!</div><div style="color:var(--text-dim);margin-bottom:16px">꿈을 이뤘습니다! 계속하시겠습니까?</div><button class="btn btn-primary" style="margin-bottom:8px" data-action="end-game">엔딩 보기</button><button class="btn" data-action="continue-game">계속하기</button></div></div>';
-  } else if (result.earlyEnd === 'bankruptcy') {
-    html += '<div class="tooltip-overlay"><div class="tooltip-card" style="text-align:center"><div style="font-size:2rem;margin-bottom:12px">💥</div><div style="font-size:1.2rem;font-weight:700;color:var(--red);margin-bottom:16px">파산</div><div style="color:var(--text-dim);margin-bottom:16px">자산이 모두 소진되었습니다.</div><button class="btn btn-primary" data-action="end-game">결과 보기</button></div></div>';
+  // Goal/bankruptcy overlay
+  if (total >= 200000) {
+    html += '<div class="tooltip-overlay" id="goal-overlay"><div class="tooltip-card" style="text-align:center"><div style="font-size:2rem;margin-bottom:12px">🏆</div><div style="font-size:1.2rem;font-weight:700;color:var(--gold);margin-bottom:8px">' + t("ui.goal_achieved") + '</div><div style="color:var(--text-dim);margin-bottom:16px">' + t("ui.goal_continue") + '</div><button class="btn btn-primary" style="margin-bottom:8px" data-action="end-game">' + t("ui.end_game") + '</button><button class="btn" data-action="continue-game">' + t("ui.continue_game") + '</button></div></div>';
   }
   app.innerHTML = html;
   window.scrollTo(0, 0);
 }
 
+// === SCREEN: END ===
 function renderEndScreen() {
-  var result = processExit(game);
-  var total = result.totalAfterTax;
-  var rank = getRank(total);
-  var shareText = generateShareText(game, total);
-  var gm = game.startCapital > 0 ? (total / game.startCapital).toFixed(1) : '∞';
+  var exitResult = JSON.parse(engine.process_exit());
+  var total = exitResult.totalNet;
+  var rank = exitResult.rank;
+  var state = JSON.parse(engine.get_state_json());
+  var shareRaw = engine.generate_share_text(total);
+  // shareRaw = "share.template:total:rankLabel:strategy:year:duration"
+  var shareParts = shareRaw.split(':');
+  var shareKey = shareParts[0];
+  var shareArgs = shareParts.slice(1);
+  // rank label is a key, translate it
+  var rankLabelTranslated = t(shareArgs[1]);
+  shareArgs[1] = rankLabelTranslated;
+  var shareText = tFmt(shareKey, shareArgs);
+  var gm = state.startCapital > 0 ? (total / state.startCapital).toFixed(1) : '∞';
   var html = '<div style="padding:24px;min-height:100vh">';
-  html += '<div style="text-align:center;font-size:1.2rem;font-weight:600;color:var(--text-dim);margin-top:16px">🏆 최종 결과</div>';
+  html += renderLangButton();
+  html += '<div style="text-align:center;font-size:1.2rem;font-weight:600;color:var(--text-dim);margin-top:16px">' + t("ui.final_result") + '</div>';
   html += '<div class="final-amount">' + formatYen(total) + '</div>';
-  html += '<div class="final-sub">(세후 최종 자산)</div>';
-  html += '<div class="rank-badge">' + rank.emoji + '</div>';
-  html += '<div class="rank-name">' + rank.name + '</div>';
-  html += '<div class="rank-desc">' + rank.desc + '</div>';
+  html += '<div class="final-sub">' + t("ui.after_tax") + '</div>';
+  html += '<div class="rank-badge">' + (rank.tier === 'gold' ? '🥇' : rank.tier === 'silver' ? '🥈' : rank.tier === 'bronze' ? '🥉' : rank.tier === 'iron' ? '⚓' : '🏅') + '</div>';
+  html += '<div class="rank-name">' + t(rank.label) + '</div>';
+  html += '<div class="rank-desc">' + t(rank.description) + '</div>';
   // Highlights
-  html += '<div class="highlight-card"><div class="hl-title">시작 자본</div><div class="hl-value">' + formatYen(game.startCapital) + '</div></div>';
-  html += '<div class="highlight-card"><div class="hl-title">성장 배수</div><div class="hl-value">' + gm + '배</div></div>';
-  html += '<div class="highlight-card"><div class="hl-title">기간</div><div class="hl-value">' + game.duration + '년</div></div>';
+  html += '<div class="highlight-card"><div class="hl-title">' + t("ui.start_capital") + '</div><div class="hl-value">' + formatYen(state.startCapital) + '</div></div>';
+  html += '<div class="highlight-card"><div class="hl-title">' + t("ui.growth_mult") + '</div><div class="hl-value">' + gm + 'x</div></div>';
+  html += '<div class="highlight-card"><div class="hl-title">' + t("ui.duration") + '</div><div class="hl-value">' + state.duration + ' ' + (currentLang === 'en' ? 'yrs' : '年') + '</div></div>';
   // Breakdown
-  html += '<div class="card"><div style="font-weight:600;margin-bottom:12px">📊 자산별 내역 (세후)</div><div class="balance-sheet">';
-  var bk = result.breakdown;
-  if (bk.business) html += '<span class="label">💼 사업 매각</span><span class="value">' + formatYen(bk.business) + '</span>';
-  if (bk.realEstate) html += '<span class="label">🏢 부동산</span><span class="value">' + formatYen(bk.realEstate) + '</span>';
-  if (bk.qqq) html += '<span class="label">📊 QQQ</span><span class="value">' + formatYen(bk.qqq) + '</span>';
-  if (bk.crypto) html += '<span class="label">💎 암호자산</span><span class="value">' + formatYen(bk.crypto) + '</span>';
-  if (bk.proptech) html += '<span class="label">🏗️ PropTech</span><span class="value">' + formatYen(bk.proptech) + '</span>';
-  if (bk.businessCash) html += '<span class="label">💼 사업 현금</span><span class="value">' + formatYen(bk.businessCash) + '</span>';
-  html += '<span class="label">💵 현금/비상금</span><span class="value">' + formatYen(bk.cash) + '</span>';
-  html += '<div class="total"><span class="label">합계</span><span class="value">' + formatYen(total) + '</span></div>';
+  html += '<div class="card"><div style="font-weight:600;margin-bottom:12px">' + t("ui.asset_breakdown") + '</div><div class="balance-sheet">';
+  exitResult.breakdowns.forEach(function(b) {
+    var catLabel = t(b.category);
+    // If category has a colon (exit.category.realestate:area), split it
+    if (b.category.indexOf(':') > -1) {
+      var catParts = b.category.split(':');
+      catLabel = t(catParts[0]) + ' (' + catParts[1] + ')';
+    }
+    html += '<span class="label">' + catLabel + '</span><span class="value">' + formatYen(b.net) + '</span>';
+  });
+  html += '<div class="total"><span class="label">' + t("ui.total") + '</span><span class="value">' + formatYen(total) + '</span></div>';
   html += '</div></div>';
   // Chart
-  if (game.history.length > 0) {
-    var maxVal = Math.max.apply(null, game.history.map(function(h) { return h.totalAssets; }));
+  if (state.history && state.history.length > 0) {
+    var maxVal = Math.max.apply(null, state.history.map(function(h) { return h.totalAssets; }));
     if (maxVal === 0) maxVal = 1;
-    html += '<div class="card"><div style="font-weight:600;margin-bottom:12px">📈 연도별 추이</div><div class="chart">';
-    for (var i = 0; i < game.history.length; i++) {
-      var h = game.history[i];
+    html += '<div class="card"><div style="font-weight:600;margin-bottom:12px">' + t("ui.chart") + '</div><div class="chart">';
+    for (var i = 0; i < state.history.length; i++) {
+      var h = state.history[i];
       var hgt = Math.max(4, Math.round(h.totalAssets / maxVal * 80));
-      var isCurrent = (i === game.history.length - 1);
+      var isCurrent = (i === state.history.length - 1);
       html += '<div class="chart-bar' + (isCurrent ? ' current' : '') + '" style="height:' + hgt + 'px" title="Y' + h.year + ': ' + formatYen(h.totalAssets) + '"></div>';
     }
     html += '</div></div>';
   }
   // Share
   html += '<div class="share-card">' + shareText + '</div>';
-  html += '<div style="display:flex;gap:8px;margin-bottom:16px"><button class="share-btn" data-action="copy-share" data-text="' + shareText.replace(/"/g, '&quot;').replace(/\n/g, '&#10;') + '">📋 복사</button>';
-  html += '<button class="share-btn" data-action="native-share" data-text="' + shareText.replace(/"/g, '&quot;').replace(/\n/g, '&#10;') + '">📤 공유</button></div>';
-  // Replay prompt
-  html += '<div class="replay-prompt"><div style="font-weight:600;margin-bottom:8px">💡 다른 전략으로 도전해보세요!</div><ul>';
-  html += '<li>• 창업 올인 → 더 빠른 성장?</li><li>• 부동산 올인 → 더 안정적?</li><li>• 암호 올인 → 하이리스크?</li></ul></div>';
-  html += '<button class="btn btn-primary" data-action="replay">다시 플레이</button>';
+  html += '<div style="display:flex;gap:8px;margin-bottom:16px"><button class="share-btn" data-action="copy-share" data-text="' + shareText.replace(/"/g, '&quot;').replace(/\n/g, '&#10;') + '">' + t("ui.copy") + '</button>';
+  html += '<button class="share-btn" data-action="native-share" data-text="' + shareText.replace(/"/g, '&quot;').replace(/\n/g, '&#10;') + '">' + t("ui.share") + '</button></div>';
+  // Replay
+  html += '<div class="replay-prompt"><div style="font-weight:600;margin-bottom:8px">' + t("ui.try_again") + '</div><ul>';
+  html += '<li>' + t("ui.try_again_1") + '</li><li>' + t("ui.try_again_2") + '</li><li>' + t("ui.try_again_3") + '</li></ul></div>';
+  html += '<button class="btn btn-primary" data-action="replay">' + t("ui.replay") + '</button>';
   html += '</div>';
   app.innerHTML = html;
-  saveLocalStats(total >= game.goal);
+  saveLocalStats(total >= 200000);
   localStorage.removeItem('richman-save');
 }
 
+// === SCREEN: GLOSSARY ===
 function renderGlossary() {
-  var keys = Object.keys(GLOSSARY);
-  var html = '<div class="tooltip-overlay" id="glossary-overlay"><div class="tooltip-card" style="max-width:400px;max-height:80vh;overflow-y:auto"><div style="font-weight:600;font-size:1.1rem;margin-bottom:12px">📖 용어 사전</div>';
-  html += '<input class="glossary-search" id="glossary-search" placeholder="검색..." data-action="glossary-search">';
-  keys.forEach(function(k) {
-    var g = GLOSSARY[k];
-    html += '<div class="glossary-item" data-term-key="' + k + '"><div class="term-name">' + g.term + '</div><div class="term-short">' + g.short + '</div><div class="term-desc">' + g.desc + '</div><div class="term-example">예) ' + g.example + '</div></div>';
+  if (glossaryData.length === 0) {
+    try { glossaryData = JSON.parse(engine.get_glossary()); } catch(e) { glossaryData = []; }
+  }
+  var html = '<div class="tooltip-overlay" id="glossary-overlay"><div class="tooltip-card" style="max-width:400px;max-height:80vh;overflow-y:auto"><div style="font-weight:600;font-size:1.1rem;margin-bottom:12px">' + t("ui.glossary") + '</div>';
+  html += '<input class="glossary-search" id="glossary-search" placeholder="' + t("ui.search") + '" data-action="glossary-search">';
+  glossaryData.forEach(function(g) {
+    var term = t(g.term);
+    var short = t(g.short);
+    var desc = t(g.desc);
+    var example = t(g.example);
+    html += '<div class="glossary-item" data-term-key="' + g.key + '"><div class="term-name">' + term + '</div><div class="term-short">' + short + '</div><div class="term-desc">' + desc + '</div><div class="term-example">' + (currentLang === 'en' ? 'e.g. ' : (currentLang === 'ja' ? '例) ' : '예) ')) + example + '</div></div>';
   });
-  html += '<button class="btn" style="margin-top:16px" data-action="close-glossary">닫기</button></div></div>';
+  html += '<button class="btn" style="margin-top:16px" data-action="close-glossary">' + t("ui.close") + '</button></div></div>';
   var existing = document.getElementById('glossary-overlay');
   if (existing) existing.remove();
   document.body.insertAdjacentHTML('beforeend', html);
-  // Wire up glossary item click
   document.querySelectorAll('.glossary-item').forEach(function(item) {
     item.addEventListener('click', function() { item.classList.toggle('expanded'); });
   });
@@ -868,10 +1282,18 @@ function renderGlossary() {
   }
 }
 
+// === TOOLTIP ===
 function showTooltip(termKey) {
-  var g = GLOSSARY[termKey];
+  if (glossaryData.length === 0) {
+    try { glossaryData = JSON.parse(engine.get_glossary()); } catch(e) {}
+  }
+  var g = glossaryData.find(function(entry) { return entry.key === termKey || entry.term === termKey; });
   if (!g) return;
-  var html = '<div class="tooltip-overlay" id="term-tooltip"><div class="tooltip-card"><div style="font-weight:600;font-size:1rem;color:var(--accent);margin-bottom:4px">📖 ' + g.term + '</div><div style="color:var(--text-dim);font-size:.85rem;margin-bottom:12px">' + g.short + '</div><div style="font-size:.9rem;line-height:1.6;margin-bottom:12px">' + g.desc + '</div><div style="font-size:.8rem;color:var(--text-faint);font-style:italic;margin-bottom:16px">예) ' + g.example + '</div><button class="btn" data-action="close-tooltip">닫기</button></div></div>';
+  var term = t(g.term);
+  var short = t(g.short);
+  var desc = t(g.desc);
+  var example = t(g.example);
+  var html = '<div class="tooltip-overlay" id="term-tooltip"><div class="tooltip-card"><div style="font-weight:600;font-size:1rem;color:var(--accent);margin-bottom:4px">📖 ' + term + '</div><div style="color:var(--text-dim);font-size:.85rem;margin-bottom:12px">' + short + '</div><div style="font-size:.9rem;line-height:1.6;margin-bottom:12px">' + desc + '</div><div style="font-size:.8rem;color:var(--text-faint);font-style:italic;margin-bottom:16px">' + (currentLang === 'en' ? 'e.g. ' : (currentLang === 'ja' ? '例) ' : '예) ')) + example + '</div><button class="btn" data-action="close-tooltip">' + t("ui.close") + '</button></div></div>';
   var existing = document.getElementById('term-tooltip');
   if (existing) existing.remove();
   document.body.insertAdjacentHTML('beforeend', html);
@@ -880,93 +1302,94 @@ function showTooltip(termKey) {
   });
 }
 
-// === 11. SCREEN NAVIGATION & TRANSITIONS ===
+// === START GAME ===
 function startGame() {
-  game = createInitialState();
-  game.cash = game.startCapital;
-  game.year = 1;
+  engine = new GameEngine(setupCapital, setupDuration, setupStrategy);
   saveGame();
   renderDecisionScreen();
 }
 
+// === DECISION HANDLER ===
 function selectDecision(optId) {
   var dec = currentDecisions.find(function(d) { return d.id === optId; });
   if (!dec) return;
-  if (dec.id === 'exit_sell_all') {
-    game.exited = true; game.gameOver = true;
+  if (dec.id === 'exit_sell_all' || dec.id === 'exit_sell_biz') {
+    engine.process_year(dec.id);
     renderEndScreen();
     return;
   }
   animateDiceRoll(function() {
-    var result = processYear(game, dec);
+    var result = JSON.parse(engine.process_year(dec.id));
     saveGame();
     renderYearResults(result);
   });
 }
 
+// === NEXT YEAR ===
 function nextYear() {
-  if (game.year >= game.duration) {
+  var state = JSON.parse(engine.get_state_json());
+  if (state.year >= state.duration || state.gameOver) {
     renderEndScreen();
     return;
   }
-  game.year++;
-  // Reset occupiedMonths for new year
-  game.realEstate.forEach(function(p) { p.occupiedMonths = 12; });
-  saveGame();
   renderDecisionScreen();
 }
 
-// === 12. LOCALSTORAGE SAVE/LOAD + STATS ===
-function saveGame() {
-  try {
-    localStorage.setItem('richman-save', JSON.stringify({ version: GAME.saveVersion, savedAt: new Date().toISOString(), state: game }));
-  } catch (e) {}
-}
-
-function loadGame() {
-  try {
-    var data = JSON.parse(localStorage.getItem('richman-save'));
-    if (!data || data.version !== GAME.saveVersion || !data.state) return null;
-    return data.state;
-  } catch (e) { return null; }
-}
-
-function hasSave() {
-  return !!loadGame();
-}
-
-function resumeGame() {
-  var s = loadGame();
-  if (s) { game = s; renderDecisionScreen(); }
-}
-
-function getLocalStats() {
-  try {
-    return JSON.parse(localStorage.getItem('richman-stats')) || { games: 0, wins: 0, strategies: {} };
-  } catch (e) { return { games: 0, wins: 0, strategies: {} }; }
-}
-
-function saveLocalStats(won) {
-  var stats = getLocalStats();
-  stats.games++;
-  if (won) stats.wins++;
-  var strat = game.strategy || '';
-  stats.strategies[strat] = (stats.strategies[strat] || 0) + 1;
-  try { localStorage.setItem('richman-stats', JSON.stringify(stats)); } catch (e) {}
-}
-
-// === 13. EVENT DELEGATION ===
+// === EVENT DELEGATION ===
 app.addEventListener('click', function(e) {
   var el = e.target;
   var actionEl = el.closest('[data-action]');
   if (!actionEl) {
-    // Check for term click
     var termEl = el.closest('[data-term]');
     if (termEl) { showTooltip(termEl.getAttribute('data-term')); }
     return;
   }
   var action = actionEl.getAttribute('data-action');
   switch (action) {
+    case 'cycle-lang':
+      cycleLang();
+      // Re-render current screen
+      // Determine which screen we're on by checking DOM
+      var langBtn = document.querySelector('.lang-btn');
+      if (langBtn) {
+        // Re-render by checking what's visible
+        // Simplest: check if engine exists and is in-game
+        if (engine && !engine.__destroyed) {
+          var state = null;
+          try { state = JSON.parse(engine.get_state_json()); } catch(e) {}
+          if (state) {
+            if (state.year > 0 && !state.game_over) {
+              renderDecisionScreen();
+            } else if (state.year > 0 && state.game_over) {
+              renderEndScreen();
+            } else {
+              renderTitle();
+            }
+          } else {
+            renderTitle();
+          }
+        } else {
+          // Check if in setup
+          if (setupStep > 0 || document.querySelector('.setup-input') || document.querySelector('.quick-select')) {
+            renderSetup(setupStep);
+          } else {
+            renderTitle();
+          }
+        }
+      } else {
+        renderTitle();
+      }
+      // Also re-render glossary if open
+      var go = document.getElementById('glossary-overlay');
+      if (go) {
+        go.remove();
+        renderGlossary();
+      }
+      var tt = document.getElementById('term-tooltip');
+      if (tt) {
+        tt.remove();
+      }
+      break;
     case 'start':
       setupStep = 0;
       renderSetup(0);
@@ -978,18 +1401,16 @@ app.addEventListener('click', function(e) {
       renderGlossary();
       break;
     case 'close-glossary':
-      var go = document.getElementById('glossary-overlay');
-      if (go) go.remove();
+      var go2 = document.getElementById('glossary-overlay');
+      if (go2) go2.remove();
       break;
     case 'close-tooltip':
-      var tt = document.getElementById('term-tooltip');
-      if (tt) tt.remove();
+      var tt2 = document.getElementById('term-tooltip');
+      if (tt2) tt2.remove();
       break;
     case 'quick-capital':
       var v = parseInt(actionEl.getAttribute('data-value'));
-      game = createInitialState();
-      game.startCapital = v;
-      game.cash = v;
+      setupCapital = v;
       setupStep = 1;
       renderSetup(1);
       break;
@@ -997,19 +1418,17 @@ app.addEventListener('click', function(e) {
       var input = document.getElementById('capital-input');
       var cv = parseInt(input.value);
       if (cv < 100 || isNaN(cv)) { input.style.borderColor = 'var(--red)'; return; }
-      game = createInitialState();
-      game.startCapital = cv;
-      game.cash = cv;
+      setupCapital = cv;
       setupStep = 1;
       renderSetup(1);
       break;
     case 'select-duration':
-      game.duration = parseInt(actionEl.getAttribute('data-value'));
+      setupDuration = parseInt(actionEl.getAttribute('data-value'));
       setupStep = 2;
       renderSetup(2);
       break;
     case 'select-strategy':
-      game.strategy = actionEl.getAttribute('data-value');
+      setupStrategy = actionEl.getAttribute('data-value');
       startGame();
       break;
     case 'decision':
@@ -1036,27 +1455,25 @@ app.addEventListener('click', function(e) {
       break;
     case 'copy-share':
       var text = actionEl.getAttribute('data-text').replace(/&#10;/g, '\n').replace(/&quot;/g, '"');
-      navigator.clipboard.writeText(text).then(function() { actionEl.textContent = '✅ 복사됨!'; });
+      navigator.clipboard.writeText(text).then(function() { actionEl.textContent = t("ui.copied"); });
       break;
     case 'native-share':
       var text2 = actionEl.getAttribute('data-text').replace(/&#10;/g, '\n').replace(/&quot;/g, '"');
-      if (navigator.share) { navigator.share({ title: '20億円の夢', text: text2 }); }
-      else { navigator.clipboard.writeText(text2).then(function() { actionEl.textContent = '✅ 복사됨!'; }); }
+      if (navigator.share) { navigator.share({ title: t("ui.title"), text: text2 }); }
+      else { navigator.clipboard.writeText(text2).then(function() { actionEl.textContent = t("ui.copied"); }); }
       break;
     case 'replay':
-      game = null;
+      engine = null;
       localStorage.removeItem('richman-save');
       renderTitle();
       break;
     case 'skip-dice':
-      // handled by overlay click
       break;
   }
 });
 
-// === 14. INIT ===
-renderTitle();
-
+// === BOOT ===
+initWasm();
 </script>
 </body>
 </html>

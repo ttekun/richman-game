@@ -1,0 +1,17 @@
+{
+  "name": "rich-man-engine",
+  "type": "module",
+  "description": "Rich Man Simulator game engine compiled to WASM",
+  "version": "0.1.0",
+  "license": "MIT",
+  "files": [
+    "rich_man_engine_bg.wasm",
+    "rich_man_engine.js",
+    "rich_man_engine.d.ts"
+  ],
+  "main": "rich_man_engine.js",
+  "types": "rich_man_engine.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
