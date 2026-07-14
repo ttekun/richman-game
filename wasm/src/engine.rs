@@ -84,11 +84,11 @@ pub fn calc_real_estate(state: &mut GameState, rng: &dyn Rng, macro_result: &Mac
 
 pub fn calc_stocks(state: &mut GameState, rng: &dyn Rng, macro_result: &MacroResult) {
     if state.stocks.qqq > 0.0 {
-        let qqq_change = random_range(rng, -0.20, 0.35);
+        let qqq_change = random_range(rng, -0.20, 0.35) + macro_result.bonus * 0.02;
         state.stocks.qqq = (state.stocks.qqq * (1.0 + qqq_change)).round();
     }
     if state.stocks.crypto > 0.0 {
-        let crypto_change = random_range(rng, -0.60, 2.00) + macro_result.market_bonus * 0.1;
+        let crypto_change = random_range(rng, -0.60, 2.00) + macro_result.bonus * 0.05 + macro_result.market_bonus * 0.1;
         state.stocks.crypto = (state.stocks.crypto * (1.0 + crypto_change)).round();
     }
 }
@@ -106,7 +106,7 @@ pub fn calc_business(state: &mut GameState, rng: &dyn Rng, macro_result: &MacroR
     let marketing_mult = if state.business.marketing_boost { 1.5 } else { 1.0 };
     let dev_mult = if state.business.dev_boost { 1.2 } else { 1.0 };
     
-    let actual_growth = base_growth * growth_penalty * marketing_mult * dev_mult;
+    let actual_growth = base_growth * growth_penalty * marketing_mult * dev_mult * (1.0 + macro_result.bonus * 0.03);
     let new_users = state.business.users * actual_growth;
     state.business.users += new_users;
     
@@ -228,6 +228,15 @@ pub fn process_year(state: &mut GameState, decision_id: &str, rng: &dyn Rng) -> 
     // Check duration end
     if state.year >= state.duration {
         state.game_over = true;
+    }
+    
+    // Check bankruptcy
+    if total <= 0.0 && state.cash < 0.0 && state.real_estate.is_empty()
+        && state.stocks.qqq + state.stocks.crypto == 0.0
+        && (!state.business.active || state.business.value == 0.0)
+    {
+        state.game_over = true;
+        state.log.push("log.bankruptcy".into());
     }
     
     YearResult {

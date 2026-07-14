@@ -400,6 +400,17 @@ pub fn get_decisions(state: &GameState, rng: &dyn Rng) -> Vec<Decision> {
         });
     }
 
+    // Fallback: if no decisions available, add a "hold" option
+    if decisions.is_empty() {
+        decisions.push(Decision {
+            id: "hold_to_end".into(),
+            label: "decision.hold_to_end".into(),
+            description: "decision.hold_to_end.desc".into(),
+            category: "wait".into(),
+            priority: 10,
+        });
+    }
+
     // Sort by priority desc, take top 4
     decisions.sort_by(|a, b| b.priority.cmp(&a.priority));
     decisions.truncate(4);

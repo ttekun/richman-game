@@ -1101,11 +1101,12 @@ function animateDiceRoll(callback) {
   overlay.innerHTML = html;
   document.body.appendChild(overlay);
   var skipped = false;
-  overlay.addEventListener('click', function() { skipped = true; });
+  overlay.addEventListener('click', function() { skipped = true; if (overlay.parentNode) overlay.parentNode.removeChild(overlay); callback(); });
   setTimeout(function() {
+    if (skipped) return;
     if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
     callback();
-  }, skipped ? 100 : 1500);
+  }, 1500);
 }
 
 // === SCREEN: YEAR RESULTS ===
@@ -1176,6 +1177,8 @@ function renderYearResults(result) {
   // Goal/bankruptcy overlay
   if (total >= 200000) {
     html += '<div class="tooltip-overlay" id="goal-overlay"><div class="tooltip-card" style="text-align:center"><div style="font-size:2rem;margin-bottom:12px">🏆</div><div style="font-size:1.2rem;font-weight:700;color:var(--gold);margin-bottom:8px">' + t("ui.goal_achieved") + '</div><div style="color:var(--text-dim);margin-bottom:16px">' + t("ui.goal_continue") + '</div><button class="btn btn-primary" style="margin-bottom:8px" data-action="end-game">' + t("ui.end_game") + '</button><button class="btn" data-action="continue-game">' + t("ui.continue_game") + '</button></div></div>';
+  } else if (result.gameOver && total <= 0) {
+    html += '<div class="tooltip-overlay"><div class="tooltip-card" style="text-align:center"><div style="font-size:2rem;margin-bottom:12px">💥</div><div style="font-size:1.2rem;font-weight:700;color:var(--red);margin-bottom:16px">' + t("ui.bankruptcy") + '</div><div style="color:var(--text-dim);margin-bottom:16px">' + t("ui.bankruptcy_desc") + '</div><button class="btn btn-primary" data-action="end-game">' + t("ui.end_game") + '</button></div></div>';
   }
   app.innerHTML = html;
   window.scrollTo(0, 0);
