@@ -12,6 +12,26 @@ export class GameEngine {
         wasm.__wbg_gameengine_free(ptr, 0);
     }
     /**
+     * Apply LLM-generated effects to game state.
+     * JSON format: {"cashDelta":0,"stocksDelta":0,"cryptoDelta":0,"businessValueDelta":0,"businessCashDelta":0,"proptechDelta":0,"rePriceDelta":0,"log":"","gameOver":false}
+     * @param {string} effects_json
+     * @returns {string}
+     */
+    apply_effects(effects_json) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ptr0 = passStringToWasm0(effects_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.gameengine_apply_effects(this.__wbg_ptr, ptr0, len0);
+            deferred2_0 = ret[0];
+            deferred2_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
      * @param {number} final_total
      * @returns {string}
      */
@@ -35,6 +55,22 @@ export class GameEngine {
         let deferred1_1;
         try {
             const ret = wasm.gameengine_get_decisions(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Get a compact game context string for LLM prompt
+     * @returns {string}
+     */
+    get_game_context() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.gameengine_get_game_context(this.__wbg_ptr);
             deferred1_0 = ret[0];
             deferred1_1 = ret[1];
             return getStringFromWasm0(ret[0], ret[1]);

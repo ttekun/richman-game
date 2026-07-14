@@ -86,4 +86,72 @@ impl GameEngine {
     pub fn set_seed(&mut self, seed: u64) {
         self.rng = Box::new(SeededRng::new(seed));
     }
+
+    /// Apply LLM-generated effects to game state.
+    /// JSON format: {"cashDelta":0,"stocksDelta":0,"cryptoDelta":0,"businessValueDelta":0,"businessCashDelta":0,"proptechDelta":0,"rePriceDelta":0,"log":"","gameOver":false}
+    pub fn apply_effects(&mut self, effects_json: &str) -> String {
+        if let Ok(effects) = serde_json::from_str::<serde_json::Value>(effects_json) {
+            if let Some(cash) = effects["cashDelta"].as_f64() {
+                self.state.cash += cash;
+            }
+            if let Some(stocks) = effects["stocksDelta"].as_f64() {
+                self.state.stocks.qqq += stocks;
+            }
+            if let Some(crypto) = effects["cryptoDelta"].as_f64() {
+                self.state.stocks.crypto += crypto;
+            }
+            if let Some(bv) = effects["businessValueDelta"].as_f64() {
+                self.state.business.value += bv;
+            }
+            if let Some(bc) = effects["businessCashDelta"].as_f64() {
+                self.state.business.cash += bc;
+            }
+            if let Some(pt) = effects["proptechDelta"].as_f64() {
+                self.state.proptech.value += pt;
+            }
+            if let Some(re_pct) = effects["rePriceDelta"].as_f64() {
+                for prop in &mut self.state.real_estate {
+                    prop.price = (prop.price * (1.0 + re_pct)).round();
+                }
+            }
+            if let Some(log) = effects["log"].as_str() {
+                if !log.is_empty() {
+                    self.state.log.push(log.to_string());
+                }
+            }
+            if let Some(game_over) = effects["gameOver"].as_bool() {
+                if game_over {
+                    self.state.game_over = true;
+                }
+            }
+        }
+
+        // Return updated state summary as JSON
+        let total = self.total_assets();
+        serde_json::json!({
+            "totalAssets": total,
+            "cash": self.state.cash,
+            "gameOver": self.state.game_over,
+        }).to_string()
+    }
+
+    /// Get a compact game context string for LLM prompt
+    pub fn get_game_context(&self) -> String {
+        let state = &self.state;
+        serde_json::json!({
+            "year": state.year,
+            "duration": state.duration,
+            "strategy": state.strategy,
+            "cash": state.cash,
+            "totalAssets": self.total_assets(),
+            "goal": state.goal,
+            "realEstate": state.real_estate.iter().map(|p| {
+                serde_json::json!({"area": p.area, "price": p.price, "loan": p.loan, "rent": p.rent, "cf": p.cf})
+            }).collect::<Vec<_>>(),
+            "stocks": {"qqq": state.stocks.qqq, "crypto": state.stocks.crypto},
+            "business": {"active": state.business.active, "mrr": state.business.mrr, "users": state.business.users, "value": state.business.value, "cash": state.business.cash, "stake": state.business.stake, "competitor": state.business.competitor},
+            "proptech": {"active": state.proptech.active, "mrr": state.proptech.mrr, "value": state.proptech.value},
+            "history": state.history,
+        }).to_string()
+    }
 }

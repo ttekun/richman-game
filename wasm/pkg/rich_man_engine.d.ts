@@ -4,8 +4,17 @@
 export class GameEngine {
     free(): void;
     [Symbol.dispose](): void;
+    /**
+     * Apply LLM-generated effects to game state.
+     * JSON format: {"cashDelta":0,"stocksDelta":0,"cryptoDelta":0,"businessValueDelta":0,"businessCashDelta":0,"proptechDelta":0,"rePriceDelta":0,"log":"","gameOver":false}
+     */
+    apply_effects(effects_json: string): string;
     generate_share_text(final_total: number): string;
     get_decisions(): string;
+    /**
+     * Get a compact game context string for LLM prompt
+     */
+    get_game_context(): string;
     get_glossary(): string;
     get_rank(total: number): string;
     get_state_json(): string;
@@ -22,8 +31,10 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_gameengine_free: (a: number, b: number) => void;
+    readonly gameengine_apply_effects: (a: number, b: number, c: number) => [number, number];
     readonly gameengine_generate_share_text: (a: number, b: number) => [number, number];
     readonly gameengine_get_decisions: (a: number) => [number, number];
+    readonly gameengine_get_game_context: (a: number) => [number, number];
     readonly gameengine_get_glossary: (a: number) => [number, number];
     readonly gameengine_get_rank: (a: number, b: number) => [number, number];
     readonly gameengine_get_state_json: (a: number) => [number, number];
@@ -34,9 +45,9 @@ export interface InitOutput {
     readonly gameengine_set_seed: (a: number, b: bigint) => void;
     readonly gameengine_total_assets: (a: number) => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_start: () => void;
 }
 
