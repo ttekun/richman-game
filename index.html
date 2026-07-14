@@ -1583,8 +1583,11 @@ async function startGameWithAI() {
     webgpuAvailable = await isWebGPUAvailable();
   }
   if (!webgpuAvailable) {
-    // Show unavailable message with retry option, then fall back to classic
-    app.innerHTML = '<div class="loading-screen"><span class="loading-spinner">⚠️</span><div style="color:var(--text);font-size:1rem;text-align:center;margin-bottom:8px">' + t("ui.ai_unavailable") + '</div><div style="color:var(--text-dim);font-size:.8rem;text-align:center;margin-bottom:16px;max-width:320px">' + t("ui.ai_unavailable_desc") + '</div><button class="btn btn-primary" style="max-width:240px;margin-bottom:8px" data-action="force-ai-load">' + t("ui.ai_retry") + '</button><button class="btn" style="max-width:240px" data-action="continue-classic">' + t("ui.classic_mode") + '</button></div>';
+    // Show unavailable message with retry option and debug info, then fall back to classic
+    var ua = navigator.userAgent;
+    var gpuInfo = 'navigator.gpu: ' + (navigator.gpu ? 'YES' : 'NO');
+    var debugInfo = gpuInfo + '<br>UA: ' + ua.substring(0, 80);
+    app.innerHTML = '<div class="loading-screen"><span class="loading-spinner">⚠️</span><div style="color:var(--text);font-size:1rem;text-align:center;margin-bottom:8px">' + t("ui.ai_unavailable") + '</div><div style="color:var(--text-dim);font-size:.8rem;text-align:center;margin-bottom:16px;max-width:320px">' + t("ui.ai_unavailable_desc") + '</div><div style="color:var(--text-dim);font-size:.7rem;text-align:center;margin-bottom:16px;max-width:320px;word-break:break-all">' + debugInfo + '</div><button class="btn btn-primary" style="max-width:240px;margin-bottom:8px" data-action="force-ai-load">' + t("ui.ai_retry") + '</button><button class="btn" style="max-width:240px" data-action="continue-classic">' + t("ui.classic_mode") + '</button></div>';
     return;
   }
   // If model already loaded, proceed directly
