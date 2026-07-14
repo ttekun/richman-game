@@ -428,6 +428,8 @@ const I18N = {
     "ui.ai_error": "AI 생성 실패. 클래식 모드로 전환.",
     "ui.ai_cancel": "취소하고 클래식 모드로",
     "ui.ai_narrative": "🎭 AI 이야기",
+    "ui.ai_unavailable_desc": "이 브라우저에서 WebGPU를 사용할 수 없습니다. 최신 Chrome/Edge에서 시도해주세요.",
+    "ui.ai_retry": "강제로 AI 모드 시도",
   },
   ja: {
     "ui.title": "20億円の夢",
@@ -674,6 +676,8 @@ const I18N = {
     "ui.ai_error": "AI生成失敗。クラシックモードに切替。",
     "ui.ai_cancel": "キャンセルしてクラシックモードへ",
     "ui.ai_narrative": "🎭 AIストーリー",
+    "ui.ai_unavailable_desc": "このブラウザではWebGPUを使用できません。最新のChrome/Edgeでお試しください。",
+    "ui.ai_retry": "強制的にAIモードを試す",
   },
   en: {
     "ui.title": "20億円の夢",
@@ -920,6 +924,8 @@ const I18N = {
     "ui.ai_error": "AI generation failed. Switching to classic mode.",
     "ui.ai_cancel": "Cancel & use classic mode",
     "ui.ai_narrative": "🎭 AI Story",
+    "ui.ai_unavailable_desc": "WebGPU is not available in this browser. Try the latest Chrome/Edge.",
+    "ui.ai_retry": "Force AI mode attempt",
   }
 };
 
@@ -1574,8 +1580,8 @@ async function startGameWithAI() {
     webgpuAvailable = await isWebGPUAvailable();
   }
   if (!webgpuAvailable) {
-    // Show unavailable message, then fall back to classic
-    app.innerHTML = '<div class="loading-screen"><span class="loading-spinner">⚠️</span><div style="color:var(--text);font-size:1rem;text-align:center;margin-bottom:16px">' + t("ui.ai_unavailable") + '</div><button class="btn btn-primary" style="max-width:240px" data-action="continue-classic">' + t("ui.classic_mode") + '</button></div>';
+    // Show unavailable message with retry option, then fall back to classic
+    app.innerHTML = '<div class="loading-screen"><span class="loading-spinner">⚠️</span><div style="color:var(--text);font-size:1rem;text-align:center;margin-bottom:8px">' + t("ui.ai_unavailable") + '</div><div style="color:var(--text-dim);font-size:.8rem;text-align:center;margin-bottom:16px;max-width:320px">' + t("ui.ai_unavailable_desc") + '</div><button class="btn btn-primary" style="max-width:240px;margin-bottom:8px" data-action="force-ai-load">' + t("ui.ai_retry") + '</button><button class="btn" style="max-width:240px" data-action="continue-classic">' + t("ui.classic_mode") + '</button></div>';
     return;
   }
   // If model already loaded, proceed directly
@@ -1825,6 +1831,17 @@ app.addEventListener('click', function(e) {
       aiModeEnabled = false;
       localStorage.setItem('richman-aimode', 'false');
       renderDecisionScreenClassic();
+      break;
+    case 'force-ai-load':
+      // Force AI mode even if WebGPU detection failed
+      webgpuAvailable = true;
+      renderModelLoadingScreen();
+      ensureMLCEngine(updateModelLoadingProgress).then(function() {
+        renderDecisionScreen();
+      }).catch(function(e) {
+        console.warn('Forced model loading failed:', e);
+        app.innerHTML = '<div class="loading-screen"><span class="loading-spinner">⚠️</span><div style="color:var(--text);font-size:1rem;text-align:center;margin-bottom:16px">' + t("ui.ai_error") + '</div><button class="btn btn-primary" style="max-width:240px" data-action="continue-classic">' + t("ui.classic_mode") + '</button></div>';
+      });
       break;
   }
 });
